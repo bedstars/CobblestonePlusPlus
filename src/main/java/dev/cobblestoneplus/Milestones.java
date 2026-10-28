@@ -261,6 +261,48 @@ public final class Milestones {
         while (credits.size() > 64) credits.poll();
     }
 
+    // Block breaks are seen without any Fabric event: the block you look at is watched, and when its state changes
+    // while you are holding attack (broken, or replaced by the server), that is one block broken.
+    private static java.lang.reflect.Field hitF;
+    private static boolean hitLooked;
+    private static net.minecraft.core.BlockPos watchPos;
+    private static net.minecraft.world.level.block.state.BlockState watchState;
+    private static int lastAttack = -100;
+
+    private static Object hitResult(Minecraft mc) throws Exception {
+        if (!hitLooked) {
+            hitLooked = true;
+            for (Class<?> c = Minecraft.class; c != null && hitF == null; c = c.getSuperclass()) {
+                try {
+                    hitF = c.getDeclaredField("hitResult");
+                    hitF.setAccessible(true);
+                } catch (NoSuchFieldException ignored) {
+                }
+            }
+        }
+        return hitF == null ? null : hitF.get(mc);
+    }
+
+    private static void scanBreaks(Minecraft mc) throws Exception {
+        if (mc.options.keyAttack.isDown()) lastAttack = tick;
+        if (watchPos != null) {
+            net.minecraft.world.level.block.state.BlockState now = mc.level.getBlockState(watchPos);
+            if (!now.equals(watchState)) {
+                if (tick - lastAttack <= 20 && !watchState.isAir()) onBreak(watchState.getBlock().getName().getString());
+                watchPos = null;
+                watchState = null;
+            }
+        }
+        Object hr = hitResult(mc);
+        if (hr instanceof net.minecraft.world.phys.BlockHitResult bhr && bhr.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK) {
+            net.minecraft.core.BlockPos p = bhr.getBlockPos();
+            if (watchPos == null || !watchPos.equals(p)) {
+                watchPos = p.immutable();
+                watchState = mc.level.getBlockState(p);
+            }
+        }
+    }
+
     /** A "+x Crop (total)" action bar line: it confirms (or corrects) the block that was just counted. */
     public static void addCount(String name, double gained) {
         Track x = byName(crops, name);
@@ -440,6 +482,7 @@ public final class Milestones {
         expire();
         if (mc.level != null) {
             try {
+                scanBreaks(mc);
                 scanKills(mc);
             } catch (Throwable t) {
                 if (tick % 600 == 0) CobblestonePlus.LOG.warn("Kill counting failed", t);

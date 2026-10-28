@@ -68,8 +68,6 @@ public final class CobblestonePlus implements ClientModInitializer {
                 Completion.onChat(t);
             }
         });
-        net.fabricmc.fabric.api.client.event.player.ClientPlayerBlockBreakEvents.AFTER.register((world, player, pos, state) ->
-                Milestones.onBreak(state.getBlock().getName().getString()));
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(ID, "panels"), (graphics, tickCounter) -> Widgets.render(graphics, false));
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> Cmds.register(dispatcher));
 
