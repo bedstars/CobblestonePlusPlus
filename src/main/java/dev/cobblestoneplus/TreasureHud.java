@@ -4,25 +4,24 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Treasure panel with two goals:
- *   completion = at least 1 of every relic (vault found/total)
- *   max        = every relic at max level (3/3); falls back to found/total when levels were not readable
+ * Treasure panel for the world you are in: seal state, active boosts and exactly which relics are still missing
+ * (what the vault menu says about each "?") or below max level. The other worlds follow as one line each.
+ * Only real worlds are listed (locked / unreleased places are dropped). Data comes from the menus you open
+ * (or /cpp treasure refresh, which asks the server for /treasures and reads it).
+ *
+ *   completion = at least 1 of every relic     max = every relic at max level (3/3)
  */
 final class TreasureHud {
     private TreasureHud() {}
 
-    private static final int OK = 0xFF55E58A, SEAL = 0xFFFFC857, BAR_BG = 0xFF2A2230;
+    private static final int OK = 0xFF55E58A, SEAL = 0xFFFFC857, BAR_BG = 0xFF2A2230, BAD = 0xFFFF6B6B, WARN = 0xFFFFC857;
 
-    private record Row(String name, int cur, int goal, boolean forged, boolean levelsKnown, boolean locked) {
-        boolean done() {
-            return goal > 0 && cur >= goal;
-        }
-    }
+    /** One printed line: left text, optional right text, optional bar (frac < 0 = none). */
+    private record Row(String left, int lc, String right, int rc, double frac, int barColor) {}
 
     private static String shortName(String n) {
         return switch (n) {
@@ -36,78 +35,120 @@ final class TreasureHud {
         };
     }
 
+    private static String trim(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max - 1) + "~";
+    }
+
     static int[] draw(GuiGraphicsExtractor g) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null || !Cfg.I.treasureHud || mc.options.hideGui) return null;
         Treasure.Summary sm = Treasure.summary;
-        if (Treasure.vaults.isEmpty() && !sm.known) return null;
+        List<Treasure.Vault> ws = Treasure.worldVaults();
+        if (ws.isEmpty() && !sm.known) return null;
 
         boolean max = "max".equalsIgnoreCase(Cfg.I.treasureMode);
+        int ci = Treasure.currentIndex(ws);
         List<Row> rows = new ArrayList<>();
-        for (Treasure.Vault v : Treasure.vaults.values()) {
-            int cur = v.found, goal = v.total;
-            boolean known = false;
-            if (max && !v.locked) {
-                int[] lv = v.levels();
-                if (lv != null) {
-                    cur = lv[0];
-                    goal = lv[1];
-                    known = true;
-                }
-            }
-            rows.add(new Row(v.name, cur, goal, v.forged, known, v.locked));
+
+        // ---- the treasure you just found (announced in chat)
+        if (!Treasure.lastFind.isEmpty() && System.currentTimeMillis() - Treasure.lastFindAt < 90_000) {
+            rows.add(new Row("NEW  " + Treasure.lastFind, Ui.GAIN, "", 0, -1, 0));
         }
-        rows.sort(Comparator.comparing((Row r) -> r.locked()).thenComparing(r -> r.done()).thenComparing(Row::name));
+
+        // ---- the world you are in
+        if (ci >= 0) {
+            Treasure.Vault v = ws.get(ci);
+            int[] lv = max ? v.levels() : null;
+            int cur = lv != null ? lv[0] : v.found, goal = lv != null ? lv[1] : v.total;
+            boolean done = goal > 0 && cur >= goal;
+            rows.add(new Row("World " + (ci + 1) + "  " + v.name, done ? OK : Ui.TEXT,
+                    cur + "/" + goal + ((max && lv == null) ? "*" : ""), done ? OK : Ui.DIM, goal > 0 ? (double) cur / goal : 0, done ? OK : SEAL));
+            String seal = v.forged ? "Seal forged" : (v.left >= 0 ? "Seal: " + v.left + " relic(s) left" : "Seal not forged");
+            rows.add(new Row(seal, v.forged ? OK : WARN, "", 0, -1, 0));
+
+            if (!v.bonuses.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                for (Map.Entry<String, Double> e : v.bonuses.entrySet()) {
+                    if (sb.length() > 0) sb.append("  ");
+                    sb.append(shortName(e.getKey())).append(" x").append(Nums.fmt(e.getValue()));
+                }
+                rows.add(new Row(sb.toString(), Ui.GAIN, "", 0, -1, 0));
+            }
+
+            int shown = 0, cap = Math.max(1, Cfg.I.treasureRows), hidden = 0;
+            if (v.relics.isEmpty()) {
+                rows.add(new Row("open this world's vault once to see", WARN, "", 0, -1, 0));
+                rows.add(new Row("which relics are missing", WARN, "", 0, -1, 0));
+            } else {
+                for (Treasure.Relic r : v.relics) {
+                    if (r.found) continue;
+                    if (shown >= cap) {
+                        hidden++;
+                        continue;
+                    }
+                    shown++;
+                    String hint = r.hint == null ? "" : r.hint.trim();
+                    rows.add(new Row("MISSING  " + (hint.isEmpty() ? "?" : trim(hint, 34)), BAD, "", 0, -1, 0));
+                }
+                if (max) {
+                    for (Treasure.Relic r : v.relics) {
+                        if (!r.found || r.level < 0 || r.max <= 0 || r.level >= r.max) continue;
+                        if (shown >= cap) {
+                            hidden++;
+                            continue;
+                        }
+                        shown++;
+                        rows.add(new Row("UPGRADE  " + r.name, WARN, r.level + "/" + r.max, Ui.DIM, (double) r.level / r.max, SEAL));
+                    }
+                }
+                if (hidden > 0) rows.add(new Row("+" + hidden + " more", Ui.DIM, "", 0, -1, 0));
+                if (shown == 0 && v.relics.size() > 0) rows.add(new Row(max ? "every relic maxed" : "every relic found", OK, "", 0, -1, 0));
+            }
+        }
+
+        // ---- the other worlds
+        if (Cfg.I.treasureOthers || ci < 0) {
+            for (int i = 0; i < ws.size(); i++) {
+                if (i == ci) continue;
+                Treasure.Vault v = ws.get(i);
+                int[] lv = max ? v.levels() : null;
+                int cur = lv != null ? lv[0] : v.found, goal = lv != null ? lv[1] : v.total;
+                boolean done = goal > 0 && cur >= goal;
+                rows.add(new Row("W" + (i + 1) + " " + v.name + (v.forged ? "  \u2713" : ""), done ? OK : Ui.DIM,
+                        cur + "/" + goal + ((max && lv == null) ? "*" : ""), done ? OK : Ui.DIM, goal > 0 ? (double) cur / goal : 0, done ? OK : SEAL));
+            }
+        }
+        if (rows.isEmpty()) return null;
 
         String title = "TREASURES  " + (max ? "MAX" : "COMPLETION");
         String head = sm.known ? sm.relicsFound + "/" + sm.relicsTotal + " relics  seals " + sm.sealsForged + "/" + sm.sealsTotal : "";
-        StringBuilder sb = new StringBuilder();
-        if (sm.known && !sm.boosts.isEmpty()) {
-            if (!sm.dim.isEmpty()) sb.append(sm.dim).append(": ");
-            boolean first = true;
-            for (Map.Entry<String, Double> e : sm.boosts.entrySet()) {
-                if (!first) sb.append("  ");
-                first = false;
-                sb.append(shortName(e.getKey())).append(" x").append(Nums.fmt(e.getValue()));
-            }
-        } else if (sm.known && sm.fortune > 0) {
-            sb.append(sm.dim.isEmpty() ? "" : sm.dim + ": ").append("Fortune x").append(Nums.fmt(sm.fortune));
-        }
-        String boost = sb.toString();
 
-        int nameW = 0, valW = Ui.tw("00/000");
-        String[] vals = new String[rows.size()];
-        for (int i = 0; i < rows.size(); i++) {
-            Row r = rows.get(i);
-            vals[i] = r.locked() ? "locked" : r.cur() + "/" + r.goal() + ((max && !r.levelsKnown()) ? "*" : "");
-            nameW = Math.max(nameW, Ui.tw(r.name()));
-            valW = Math.max(valW, Ui.tw(vals[i]));
+        int lw = 0, rw = 0;
+        boolean anyBar = false;
+        for (Row r : rows) {
+            lw = Math.max(lw, Ui.tw(r.left()));
+            rw = Math.max(rw, Ui.tw(r.right()));
+            if (r.frac() >= 0) anyBar = true;
         }
-        int w = Math.max(Ui.tw(title) + Ui.tw(head) + 24, 7 + nameW + 8 + 36 + 8 + valW + 14);
-        w = Math.max(w, Ui.tw(boost) + 14);
-        int h = 16 + (boost.isEmpty() ? 0 : 11) + rows.size() * 12 + 3;
+        int w = 7 + lw + (anyBar ? 8 + 36 : 0) + (rw > 0 ? 8 + rw : 0) + 7;
+        w = Math.max(w, Ui.tw(title) + Ui.tw(head) + 24);
+        int h = 16 + rows.size() * 12 + 3;
 
         int x = 0, y = 0;
-
         Ui.rr(g, x, y, w, h, Ui.PANEL);
         g.fill(x, y, x + 2, y + h, SEAL);
         Ui.text(g, title, x + 7, y + 4, SEAL);
         Ui.text(g, head, x + w - Ui.tw(head) - 5, y + 4, Ui.TEXT);
 
         int ry = y + 16;
-        if (!boost.isEmpty()) {
-            Ui.text(g, boost, x + 7, ry, Ui.GAIN);
-            ry += 11;
-        }
-        for (int i = 0; i < rows.size(); i++) {
-            Row r = rows.get(i);
-            boolean d = r.done();
-            Ui.text(g, r.name(), x + 7, ry, r.locked() ? Ui.DIM : (d ? OK : Ui.TEXT));
-            int bx = x + 7 + nameW + 8;
-            g.fill(bx, ry + 3, bx + 36, ry + 7, BAR_BG);
-            if (r.goal() > 0 && !r.locked()) g.fill(bx, ry + 3, bx + (int) (36.0 * Math.min(r.cur(), r.goal()) / r.goal()), ry + 7, d ? OK : Ui.alpha(SEAL, 220));
-            Ui.text(g, vals[i], x + w - Ui.tw(vals[i]) - 12, ry, r.locked() ? Ui.DIM : (d ? OK : Ui.DIM));
-            g.fill(x + w - 8, ry + 2, x + w - 4, ry + 6, r.forged() ? SEAL : 0xFF4B4054);
+        for (Row r : rows) {
+            Ui.text(g, r.left(), x + 7, ry, r.lc());
+            if (r.frac() >= 0) {
+                int bx = x + 7 + lw + 8;
+                g.fill(bx, ry + 3, bx + 36, ry + 7, BAR_BG);
+                g.fill(bx, ry + 3, bx + (int) (36.0 * Math.min(1, r.frac())), ry + 7, Ui.alpha(r.barColor(), 220));
+            }
+            if (!r.right().isEmpty()) Ui.text(g, r.right(), x + w - Ui.tw(r.right()) - 7, ry, r.rc());
             ry += 12;
         }
         return new int[]{w, h};

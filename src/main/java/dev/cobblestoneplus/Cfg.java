@@ -31,6 +31,7 @@ public final class Cfg {
     public W pins = new W(0.0, 0.55);
     public W treasure = new W(1.0, 0.45);
     public W shiny = new W(0.5, 0.0);
+    public W milestones = new W(0.0, 0.32);
     public double textScale = 1.0;   // global text size multiplier
     public boolean autoShrink = true; // shrink panels when the game window / GUI area gets smaller
     public int refWidth = 640;        // GUI width (in GUI units) at which panels are 100% size
@@ -44,6 +45,8 @@ public final class Cfg {
 
     // ---- other panels ----
     public boolean boostersHud = true;
+    public boolean boostersAuto = true;   // keep the multiplier in sync by asking the server for /stats when something changes
+    public int boostersEverySecs = 90;    // and at least this often
     public boolean pinsHud = true;
     public boolean treasureHud = true;
     public String treasureMode = "completion"; // completion = 1 of each relic, max = every relic at max level
@@ -51,6 +54,21 @@ public final class Cfg {
     public boolean shinyEcho = true;
     public boolean shinyRush = true;
     public int shinyRange = 160;
+    public boolean shinyNeedRings = true; // a yellow block only counts as RUSH when the yellow rings are around it
+    public int shinyRingMin = 5;          // how many ring pieces (display entities) must be around it
+    public boolean shinyBlueEcho = true;  // a steady blue / cyan glow also counts as ECHO
+
+    // ---- milestones ----
+    public boolean milestonesHud = true;
+    public int milestoneWorld = 0;        // 0 = follow the crop you are farming, 1..worlds = fixed
+    public boolean milestoneMobs = true;
+    public boolean milestoneDone = false; // also list finished crops / mobs
+    public int milestoneRows = 10;        // max unfinished rows per section
+    public int treasureWorld = 0;         // 0 = the world you are in, 1..worlds = fixed
+    public boolean treasureOthers = true; // one line per other world
+    public int treasureRows = 12;         // max missing / upgrade rows
+    public int worlds = 4;
+    public int worldSize = 8;             // crops / mobs per world
 
     public static Path dir() {
         try {
@@ -80,6 +98,13 @@ public final class Cfg {
         if (I.pins == null) I.pins = new W(0.0, 0.55);
         if (I.treasure == null) I.treasure = new W(1.0, 0.45);
         if (I.shiny == null) I.shiny = new W(0.5, 0.0);
+        if (I.milestones == null) I.milestones = new W(0.0, 0.32);
+        if (I.worlds < 1) I.worlds = 4;
+        if (I.boostersEverySecs < 5) I.boostersEverySecs = 90;
+        if (I.treasureRows < 1) I.treasureRows = 12;
+        if (I.worldSize < 1) I.worldSize = 8;
+        if (I.milestoneRows < 1) I.milestoneRows = 10;
+        if (I.shinyRingMin < 1) I.shinyRingMin = 5;
         if (I.textScale < 0.3) I.textScale = 1.0;
         if (I.refWidth < 160) I.refWidth = 640;
     }

@@ -78,7 +78,22 @@ final class Cmds {
                     return 1;
                 }));
 
-        var bo = onOff("boosters", "Multiplier HUD", v -> Cfg.I.boostersHud = v);
+        var bo = onOff("boosters", "Multiplier HUD", v -> Cfg.I.boostersHud = v)
+                .then(ClientCommands.literal("refresh").executes(c -> {
+                    Boosters.refresh();
+                    return say(c.getSource(), "Asked the server for /stats - read and closed automatically.");
+                }))
+                .then(ClientCommands.literal("auto").executes(c -> {
+                    Cfg.I.boostersAuto = !Cfg.I.boostersAuto;
+                    Cfg.save();
+                    return say(c.getSource(), "Auto-update " + (Cfg.I.boostersAuto ? "on." : "off."));
+                }))
+                .then(ClientCommands.literal("every")
+                        .then(ClientCommands.argument("secs", IntegerArgumentType.integer(5, 3600)).executes(c -> {
+                            Cfg.I.boostersEverySecs = IntegerArgumentType.getInteger(c, "secs");
+                            Cfg.save();
+                            return say(c.getSource(), "Multiplier re-read at least every " + Cfg.I.boostersEverySecs + "s.");
+                        })));
 
         var pn = onOff("pins", "Pins HUD", v -> Cfg.I.pinsHud = v)
                 .then(ClientCommands.literal("forget").executes(c -> {
@@ -95,6 +110,21 @@ final class Cmds {
                             Cfg.save();
                             return say(c.getSource(), "Treasure goal: " + m + (m.equals("max") ? " (every relic 3/3)" : " (1 of each relic)"));
                         })))
+                .then(ClientCommands.literal("refresh").executes(c -> {
+                    boolean ok = Treasure.refresh(net.minecraft.client.Minecraft.getInstance());
+                    return say(c.getSource(), ok ? "Asked the server for /treasures - it is read and closed automatically." : "Could not send /treasures.");
+                }))
+                .then(ClientCommands.literal("world")
+                        .then(ClientCommands.argument("n", IntegerArgumentType.integer(0, 9)).executes(c -> {
+                            Cfg.I.treasureWorld = IntegerArgumentType.getInteger(c, "n");
+                            Cfg.save();
+                            return say(c.getSource(), Cfg.I.treasureWorld == 0 ? "Treasures follow the world you are in." : "Treasures locked to world " + Cfg.I.treasureWorld + ".");
+                        })))
+                .then(ClientCommands.literal("others").executes(c -> {
+                    Cfg.I.treasureOthers = !Cfg.I.treasureOthers;
+                    Cfg.save();
+                    return say(c.getSource(), "Other worlds " + (Cfg.I.treasureOthers ? "listed." : "hidden."));
+                }))
                 .then(ClientCommands.literal("forget").executes(c -> {
                     Treasure.forget();
                     return say(c.getSource(), "Treasure data cleared. Open The Treasury to re-learn.");
@@ -111,6 +141,11 @@ final class Cmds {
                     Cfg.save();
                     return say(c.getSource(), "Rush tracking " + (Cfg.I.shinyRush ? "on." : "off."));
                 }))
+                .then(ClientCommands.literal("rings").executes(c -> {
+                    Cfg.I.shinyNeedRings = !Cfg.I.shinyNeedRings;
+                    Cfg.save();
+                    return say(c.getSource(), "Rush needs rings: " + (Cfg.I.shinyNeedRings ? "on." : "off."));
+                }))
                 .then(ClientCommands.literal("range")
                         .then(ClientCommands.argument("n", IntegerArgumentType.integer(16, 512)).executes(c -> {
                             Cfg.I.shinyRange = IntegerArgumentType.getInteger(c, "n");
@@ -125,6 +160,28 @@ final class Cmds {
                     return 1;
                 }));
 
+        var ms = onOff("milestones", "Milestones HUD", v -> Cfg.I.milestonesHud = v)
+                .then(ClientCommands.literal("world")
+                        .then(ClientCommands.argument("n", IntegerArgumentType.integer(0, 9)).executes(c -> {
+                            Cfg.I.milestoneWorld = IntegerArgumentType.getInteger(c, "n");
+                            Cfg.save();
+                            return say(c.getSource(), Cfg.I.milestoneWorld == 0 ? "Milestones follow the crop you farm." : "Milestones locked to world " + Cfg.I.milestoneWorld + ".");
+                        })))
+                .then(ClientCommands.literal("mobs").executes(c -> {
+                    Cfg.I.milestoneMobs = !Cfg.I.milestoneMobs;
+                    Cfg.save();
+                    return say(c.getSource(), "Mob milestones " + (Cfg.I.milestoneMobs ? "shown." : "hidden."));
+                }))
+                .then(ClientCommands.literal("done").executes(c -> {
+                    Cfg.I.milestoneDone = !Cfg.I.milestoneDone;
+                    Cfg.save();
+                    return say(c.getSource(), "Finished milestones " + (Cfg.I.milestoneDone ? "shown." : "hidden."));
+                }))
+                .then(ClientCommands.literal("forget").executes(c -> {
+                    Milestones.forget();
+                    return say(c.getSource(), "Milestone data cleared. Open /milestones (every page) to re-learn.");
+                }));
+
         var menu = ClientCommands.literal("menu").executes(c -> {
             CobblestonePlus.openLater(1);
             return 1;
@@ -134,7 +191,7 @@ final class Cmds {
             return 1;
         });
 
-        d.register(ClientCommands.literal("cpp").then(bp).then(bo).then(pn).then(tr).then(sh).then(menu).then(edit)
+        d.register(ClientCommands.literal("cpp").then(bp).then(bo).then(pn).then(tr).then(sh).then(ms).then(menu).then(edit)
                 .executes(c -> {
                     CobblestonePlus.openLater(1);
                     return 1;

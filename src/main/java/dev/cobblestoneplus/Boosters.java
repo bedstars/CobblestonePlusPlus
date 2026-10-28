@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.inventory.Slot;
@@ -79,9 +80,75 @@ public final class Boosters {
         }
     }
 
+    // ------------------------------------------------------------ live updates
+
+    private static String sig;
+    private static long changedAt = -1, lastAsk;
+    private static boolean wasMenu;
+    private static final Pattern BUYING = Pattern.compile("(?i)\\b(purchased|bought|upgraded|upgrade|equipped|unlocked|enchanted|crafted|forged)\\b");
+
+    /** Asks the server for /stats (read + closed automatically) when auto-update is on. */
+    public static void request() {
+        if (Cfg.I.boostersAuto) Sync.ask("stats", false);
+    }
+
+    /** Manual update from the menu / command: works even with a screen open. */
+    public static void refresh() {
+        Sync.ask("stats", true);
+    }
+
+    public static void onChat(String t) {
+        if (t == null || t.contains("\u00bb")) return; // player chat
+        if (BUYING.matcher(t).find()) request();
+    }
+
+    private static String item(ItemStack st) {
+        return st.isEmpty() ? "-" : st.getHoverName().getString() + "x" + st.getCount();
+    }
+
+    private static String signature(Minecraft mc) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(item(mc.player.getMainHandItem())).append('|').append(item(mc.player.getOffhandItem()));
+        for (EquipmentSlot es : new EquipmentSlot[]{EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
+            sb.append('|').append(item(mc.player.getItemBySlot(es)));
+        }
+        return sb.toString();
+    }
+
+    /** Armor on / off, tool held / not held, an upgrade bought (a menu was closed): ask for the new multiplier. */
+    private static void watch(Minecraft mc) {
+        String s = signature(mc);
+        if (sig == null) {
+            sig = s;
+            lastAsk = tick;
+            request();
+            return;
+        }
+        if (!s.equals(sig)) {
+            sig = s;
+            changedAt = tick;
+        }
+        boolean menu = Scr.get(mc) instanceof AbstractContainerScreen<?>;
+        if (wasMenu && !menu && !Sync.busy()) changedAt = tick; // closed a shop / inventory: something may have changed
+        wasMenu = menu;
+        if (changedAt >= 0 && tick - changedAt >= 10) {
+            changedAt = -1;
+            lastAsk = tick;
+            request();
+        } else if (tick - lastAsk >= Math.max(5, Cfg.I.boostersEverySecs) * 20L) {
+            lastAsk = tick;
+            request();
+        }
+    }
+
     public static void onTick(Minecraft mc) {
-        if (mc.player == null) return;
-        if (++tick % 5 != 0) return;
+        if (mc.player == null) {
+            sig = null;
+            return;
+        }
+        tick++;
+        if (Cfg.I.boostersAuto && tick % 5 == 1) watch(mc);
+        if (tick % 5 != 0) return;
         if (!(Scr.get(mc) instanceof AbstractContainerScreen<?> gs)) return;
         for (Slot s : gs.getMenu().slots) {
             if (s.container == mc.player.getInventory()) continue;
@@ -91,7 +158,10 @@ public final class Boosters {
             if (l == null) continue;
             List<String> lines = new ArrayList<>();
             for (Component c : l.lines()) lines.add(c.getString());
-            if (parse(lines)) return;
+            if (parse(lines)) {
+                Sync.done("stats", gs);
+                return;
+            }
         }
     }
 

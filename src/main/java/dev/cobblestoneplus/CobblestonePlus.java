@@ -35,21 +35,30 @@ public final class CobblestonePlus implements ClientModInitializer {
         Boosters.load();
         Pins.load();
         Treasure.load();
+        Milestones.load();
         Widgets.init();
 
         KeyMapping.Category cat = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(ID, "main"));
         K_MENU = KeyMappingHelper.registerKeyMapping(new KeyMapping("key." + ID + ".menu", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_CONTROL, cat));
         K_EDIT = KeyMappingHelper.registerKeyMapping(new KeyMapping("key." + ID + ".edit", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, cat));
 
+        ClientTickEvents.END_CLIENT_TICK.register(Sync::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Backpack::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Boosters::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Pins::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Treasure::onTick);
+        ClientTickEvents.END_CLIENT_TICK.register(Milestones::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Shiny::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(CobblestonePlus::onTick);
 
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
-            if (overlay) Backpack.onActionBar(message.getString());
+            if (overlay) {
+                Backpack.onActionBar(message.getString());
+            } else {
+                String t = message.getString();
+                Treasure.onChat(t);
+                Boosters.onChat(t);
+            }
         });
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(ID, "panels"), (graphics, tickCounter) -> Widgets.render(graphics, false));
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> Cmds.register(dispatcher));

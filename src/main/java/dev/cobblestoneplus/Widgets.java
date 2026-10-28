@@ -52,6 +52,7 @@ public final class Widgets {
     public static void init() {
         all.add(new Widget("backpack", "Backpack", () -> Cfg.I.backpack, () -> Cfg.I.backpackHud, v -> Cfg.I.backpackHud = v, BackpackHud::draw, 0.0, 0.15));
         all.add(new Widget("boosters", "Multipliers", () -> Cfg.I.boosters, () -> Cfg.I.boostersHud, v -> Cfg.I.boostersHud = v, BoostersHud::draw, 1.0, 0.10));
+        all.add(new Widget("milestones", "Milestones", () -> Cfg.I.milestones, () -> Cfg.I.milestonesHud, v -> Cfg.I.milestonesHud = v, MilestonesHud::draw, 0.0, 0.32));
         all.add(new Widget("pins", "Crafting pins", () -> Cfg.I.pins, () -> Cfg.I.pinsHud, v -> Cfg.I.pinsHud = v, PinsHud::draw, 0.0, 0.55));
         all.add(new Widget("treasure", "Treasures", () -> Cfg.I.treasure, () -> Cfg.I.treasureHud, v -> Cfg.I.treasureHud = v, TreasureHud::draw, 1.0, 0.45));
         all.add(new Widget("shiny", "Shiny finder", () -> Cfg.I.shiny, () -> Cfg.I.shinyHud, v -> Cfg.I.shinyHud = v, ShinyHud::draw, 0.5, 0.0));

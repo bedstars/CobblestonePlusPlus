@@ -124,6 +124,7 @@ public final class Backpack {
             double gained = Nums.parse(m.group(1));
             double total = Nums.parse(m.group(3));
             if (gained <= 0) continue;
+            Milestones.onGain(name);
             Entry e = get(name);
             e.amount = total;
             e.session += gained;
@@ -139,7 +140,7 @@ public final class Backpack {
         if (mc.player == null) return;
         tick++;
         if (tick % 5 == 0) scanMenu(mc);
-        if (tick % 40 == 0) scanBundle(mc);
+        if (tick % 10 == 0) scanBundle(mc);
         if (dirty && tick % 200 == 0) save();
     }
 

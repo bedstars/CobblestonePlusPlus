@@ -34,8 +34,8 @@ final class MenuScreen extends CppScreen {
 
     private record Btn(String label, Supplier<String> text, Runnable run) implements Ctl {}
 
-    private static final String[] TABS = {"GENERAL", "BACKPACK", "TREASURE", "SHINY", "DATA"};
-    private static final int LW = 380, LH = 240, ROW = 19;
+    private static final String[] TABS = {"GENERAL", "BACKPACK", "MULTI", "GOALS", "TREASURE", "SHINY", "DATA"};
+    private static final int LW = 380, LH = 262, ROW = 19;
     private static final int ON = 0xFF34D17A, OFF = 0xFF4B4054, KNOB = 0xFFF0EAF5;
 
     private final List<Hit> hits = new ArrayList<>();
@@ -56,6 +56,7 @@ final class MenuScreen extends CppScreen {
         g.add(new Tog("Backpack panel", () -> Cfg.I.backpackHud, v -> Cfg.I.backpackHud = v));
         g.add(new Tog("Multiplier panel", () -> Cfg.I.boostersHud, v -> Cfg.I.boostersHud = v));
         g.add(new Tog("Crafting pins panel", () -> Cfg.I.pinsHud, v -> Cfg.I.pinsHud = v));
+        g.add(new Tog("Milestones panel", () -> Cfg.I.milestonesHud, v -> Cfg.I.milestonesHud = v));
         g.add(new Tog("Treasure panel", () -> Cfg.I.treasureHud, v -> Cfg.I.treasureHud = v));
         g.add(new Tog("Shiny finder", () -> Cfg.I.shinyHud, v -> Cfg.I.shinyHud = v));
         g.add(new Btn("Move / scale panels", () -> "HUD EDITOR", () -> Scr.set(Minecraft.getInstance(), new EditorScreen())));
@@ -72,14 +73,41 @@ final class MenuScreen extends CppScreen {
         b.add(new Btn("Session gains", () -> "RESET", Backpack::resetSession));
         pages.add(b);
 
+        List<Ctl> mu = new ArrayList<>();
+        mu.add(new Tog("Multiplier panel", () -> Cfg.I.boostersHud, v -> Cfg.I.boostersHud = v));
+        mu.add(new Tog("Auto-update from server", () -> Cfg.I.boostersAuto, v -> Cfg.I.boostersAuto = v));
+        mu.add(new Step("Re-read at least every", () -> Cfg.I.boostersEverySecs, v -> Cfg.I.boostersEverySecs = (int) Math.round(v), 15, 600, 15, 1, "s"));
+        mu.add(new Btn("Update now (/stats)", () -> "REFRESH", Boosters::refresh));
+        pages.add(mu);
+
+        List<Ctl> ms = new ArrayList<>();
+        ms.add(new Tog("Milestones panel", () -> Cfg.I.milestonesHud, v -> Cfg.I.milestonesHud = v));
+        ms.add(new Cyc("World", new String[]{"auto", "1", "2", "3", "4"},
+                () -> Cfg.I.milestoneWorld == 0 ? "auto" : String.valueOf(Cfg.I.milestoneWorld),
+                v -> Cfg.I.milestoneWorld = v.equals("auto") ? 0 : Integer.parseInt(v)));
+        ms.add(new Tog("Show mob milestones", () -> Cfg.I.milestoneMobs, v -> Cfg.I.milestoneMobs = v));
+        ms.add(new Tog("Also show finished ones", () -> Cfg.I.milestoneDone, v -> Cfg.I.milestoneDone = v));
+        ms.add(new Step("Max rows per section", () -> Cfg.I.milestoneRows, v -> Cfg.I.milestoneRows = (int) Math.round(v), 1, 30, 1, 1, ""));
+        ms.add(new Btn("Learned milestones", () -> sure("ms", "FORGET"), () -> confirmThen("ms", Milestones::forget)));
+        pages.add(ms);
+
         List<Ctl> t = new ArrayList<>();
         t.add(new Cyc("Goal", new String[]{"completion", "max"}, () -> Cfg.I.treasureMode, v -> Cfg.I.treasureMode = v));
+        t.add(new Cyc("World", new String[]{"auto", "1", "2", "3", "4"},
+                () -> Cfg.I.treasureWorld == 0 ? "auto" : String.valueOf(Cfg.I.treasureWorld),
+                v -> Cfg.I.treasureWorld = v.equals("auto") ? 0 : Integer.parseInt(v)));
+        t.add(new Tog("List the other worlds", () -> Cfg.I.treasureOthers, v -> Cfg.I.treasureOthers = v));
+        t.add(new Step("Max missing rows", () -> Cfg.I.treasureRows, v -> Cfg.I.treasureRows = (int) Math.round(v), 1, 30, 1, 1, ""));
+        t.add(new Btn("Ask server (/treasures)", () -> "REFRESH", () -> Treasure.refresh(Minecraft.getInstance())));
         t.add(new Btn("Learned treasure data", () -> sure("treasure", "FORGET"), () -> confirmThen("treasure", Treasure::forget)));
         pages.add(t);
 
         List<Ctl> sh = new ArrayList<>();
         sh.add(new Tog("Track echo (rainbow)", () -> Cfg.I.shinyEcho, v -> Cfg.I.shinyEcho = v));
         sh.add(new Tog("Track rush (yellow)", () -> Cfg.I.shinyRush, v -> Cfg.I.shinyRush = v));
+        sh.add(new Tog("Rush needs its rings", () -> Cfg.I.shinyNeedRings, v -> Cfg.I.shinyNeedRings = v));
+        sh.add(new Step("Ring pieces needed", () -> Cfg.I.shinyRingMin, v -> Cfg.I.shinyRingMin = (int) Math.round(v), 1, 40, 1, 1, ""));
+        sh.add(new Tog("Steady blue counts as echo", () -> Cfg.I.shinyBlueEcho, v -> Cfg.I.shinyBlueEcho = v));
         sh.add(new Step("Search range", () -> Cfg.I.shinyRange, v -> Cfg.I.shinyRange = (int) Math.round(v), 16, 512, 16, 1, " blocks"));
         pages.add(sh);
 
@@ -87,6 +115,7 @@ final class MenuScreen extends CppScreen {
         d.add(new Btn("Session gains", () -> "RESET", Backpack::resetSession));
         d.add(new Btn("Backpack data", () -> sure("bp", "WIPE"), () -> confirmThen("bp", Backpack::wipe)));
         d.add(new Btn("Learned recipes", () -> sure("recipes", "FORGET"), () -> confirmThen("recipes", Pins::forget)));
+        d.add(new Btn("Milestone data", () -> sure("ms2", "FORGET"), () -> confirmThen("ms2", Milestones::forget)));
         d.add(new Btn("Treasure data", () -> sure("treasure2", "FORGET"), () -> confirmThen("treasure2", Treasure::forget)));
         d.add(new Btn("All panel positions", () -> sure("layout", "RESET"), () -> confirmThen("layout", () -> {
             for (Widgets.Widget w : Widgets.all) w.reset();
@@ -132,7 +161,7 @@ final class MenuScreen extends CppScreen {
             g.fill(i, 0, Math.min(i + 2, LW), 2, Ui.lerp(Ui.GOLD, Ui.ACCENT, wave));
         }
         Ui.text(g, "cobblestone++", 12, 9, Ui.TEXT);
-        String ver = "v0.6";
+        String ver = "v0.7";
         Ui.text(g, ver, LW - 12 - Ui.tw(ver), 9, Ui.DIM);
 
         // tabs

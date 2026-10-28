@@ -3,7 +3,7 @@
   "id": "cobblestoneplus",
   "version": "${version}",
   "name": "cobblestone++",
-  "description": "Client-side QoL for play.cobblestone.gg: backpack HUD, stats breakdowns, crafting pins, treasures and shiny block tracking.",
+  "description": "Client-side QoL for play.cobblestone.gg: backpack HUD, stats breakdowns, crafting pins, treasures, milestones and shiny block tracking.",
   "authors": ["cobblestone++"],
   "license": "MIT",
   "environment": "client",

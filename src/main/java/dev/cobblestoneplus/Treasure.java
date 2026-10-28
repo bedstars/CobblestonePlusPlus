@@ -34,6 +34,8 @@ public final class Treasure {
         public String name;
         public int level = -1; // -1 = unknown
         public int max = -1;
+        public boolean found = true; // false = still "?" in the vault menu
+        public String hint = "";     // what the vault menu says about an unfound relic
     }
 
     public static final class Vault {
@@ -41,6 +43,7 @@ public final class Treasure {
         public int found, total;
         public boolean forged;
         public boolean locked;
+        public int order = -1;         // position among the open vaults in The Treasury (0 = first) = world - 1
         public int left = -1;          // relics left until the seal is forged (-1 unknown)
         public double sealFortune;
         public Map<String, Double> bonuses = new LinkedHashMap<>();
@@ -48,16 +51,18 @@ public final class Treasure {
 
         /** Sum of relic levels / sum of max levels, or null when the tooltips did not show levels. */
         public int[] levels() {
-            int cur = 0, mx = 0;
+            int cur = 0, mx = 0, n = 0, per = 3;
             for (Relic r : relics) {
+                if (!r.found) continue;
                 if (r.level < 0 || r.max <= 0) return null;
                 cur += r.level;
                 mx += r.max;
+                per = r.max;
+                n++;
             }
-            if (relics.isEmpty()) return null;
-            // unfound relics count as 0 / 3 (max-level assumed from the found ones)
-            int per = relics.get(0).max;
-            int missing = Math.max(0, total - relics.size());
+            if (n == 0) return null;
+            // unfound relics count as 0 / max
+            int missing = Math.max(0, total - n);
             return new int[]{cur, mx + missing * per};
         }
     }
@@ -103,6 +108,7 @@ public final class Treasure {
                 if (s != null) {
                     vaults.clear();
                     if (s.vaults != null) vaults.putAll(s.vaults);
+                    vaults.values().removeIf(v -> v.locked);
                     if (s.summary != null) summary = s.summary;
                 }
             }
@@ -127,6 +133,89 @@ public final class Treasure {
         vaults.clear();
         summary = new Summary();
         save();
+    }
+
+    // ------------------------------------------------------------ worlds
+
+    /** The real worlds in order (world n = n-th open vault in The Treasury). Locked / extra places are left out. */
+    public static List<Vault> worldVaults() {
+        List<Vault> out = new ArrayList<>();
+        for (Vault v : vaults.values()) if (!v.locked && v.order >= 0) out.add(v);
+        out.sort(java.util.Comparator.comparingInt((Vault v) -> v.order));
+        int max = Math.max(1, Cfg.I.worlds);
+        if (out.size() > max) out = new ArrayList<>(out.subList(0, max));
+        if (out.isEmpty()) {
+            // the order is not known yet (The Treasury was never opened): fall back to whatever is stored
+            for (Vault v : vaults.values()) if (!v.locked) out.add(v);
+        }
+        return out;
+    }
+
+    /** Index into {@link #worldVaults()} (0-based) of the world shown in detail, or -1. */
+    public static int currentIndex(List<Vault> ws) {
+        if (ws.isEmpty()) return -1;
+        if (Cfg.I.treasureWorld > 0) return Math.min(ws.size(), Cfg.I.treasureWorld) - 1;
+        String dim = summary.dim == null ? "" : summary.dim.trim();
+        if (!dim.isEmpty()) {
+            for (int i = 0; i < ws.size(); i++) if (ws.get(i).name.equalsIgnoreCase(dim)) return i;
+        }
+        int mw = Milestones.currentWorld();
+        if (mw > 0 && mw <= ws.size()) return mw - 1;
+        return -1;
+    }
+
+    /** Asks the server for the treasury menu (the /treasures command); it is read and closed again. */
+    public static boolean refresh(Minecraft mc) {
+        if (mc.player == null) return false;
+        Sync.ask("treasures", true);
+        return true;
+    }
+
+    // ------------------------------------------------------------ chat
+
+    /** Last treasure you found (announced in chat: name + level, then the stats it gives). */
+    public static String lastFind = "";
+    public static long lastFindAt;
+
+    private static final Pattern FOUND = Pattern.compile("(?:Duplicate\\s+)?(.+?)\\s+Treasure\\b.*?(\\d+)\\s*/\\s*(\\d+)");
+    private static final Pattern GAIN = Pattern.compile("^\\W*\\+\\s*([\\d.,]+)\\s*%\\s*([A-Za-z][A-Za-z ]*?)\\s*$");
+
+    public static void onChat(String text) {
+        if (text == null || !text.contains("Treasure") || text.contains("unearthed")) return; // others' finds are not yours
+        String found = null;
+        int lvl = 0, max = 0;
+        List<String> gains = new ArrayList<>();
+        for (String raw : text.split("\\R")) {
+            String line = raw.trim();
+            if (found == null) {
+                Matcher m = FOUND.matcher(line);
+                if (m.find()) {
+                    lvl = Integer.parseInt(m.group(2));
+                    max = Integer.parseInt(m.group(3));
+                    String[] words = m.group(1).trim().split("\\s+");
+                    for (int i = 0; i < words.length && found == null; i++) {      // drop rarity / symbols in front until a crop matches
+                        StringBuilder sb = new StringBuilder();
+                        for (int k = i; k < words.length; k++) sb.append(k > i ? " " : "").append(words[k]);
+                        Milestones.Track t = Milestones.find(sb.toString());
+                        if (t != null) {
+                            t.treasure = lvl;
+                            t.treasureMax = max;
+                            Milestones.touch();
+                            found = t.name;
+                        }
+                    }
+                    if (found == null) found = m.group(1).trim();
+                    continue;
+                }
+            }
+            Matcher g = GAIN.matcher(line);
+            if (g.find()) gains.add("+" + g.group(1) + "% " + g.group(2).trim());
+        }
+        if (found == null) return;
+        lastFind = found + " " + lvl + "/" + max + (gains.isEmpty() ? "" : "  " + String.join("  ", gains));
+        lastFindAt = System.currentTimeMillis();
+        Sync.ask("treasures", false); // seals / boosts changed: re-read them
+        Boosters.request();           // and the multiplier
     }
 
     // ------------------------------------------------------------ scanning
@@ -158,6 +247,8 @@ public final class Treasure {
             v = new Vault();
             v.name = vname;
         }
+        int ord = 0;
+        boolean sawHeads = false, sawTreasury = false;
         for (Slot s : gs.getMenu().slots) {
             if (s.container == mc.player.getInventory()) continue;
             ItemStack st = s.getItem();
@@ -167,10 +258,17 @@ public final class Treasure {
 
             if (name.equals("The Treasury")) {
                 parseTreasury(lore);
+                sawTreasury = true;
                 continue;
             }
-            if (parseVaultHead(name, lore)) continue;
-            if (!isVault) continue;
+            if (!isVault) {
+                Vault hv = parseVaultHead(name, lore);
+                if (hv != null) {
+                    hv.order = ord++;
+                    sawHeads = true;
+                }
+                continue;
+            }
 
             if (name.contains("Vault Seal")) {
                 for (String line : lore) {
@@ -187,12 +285,26 @@ public final class Treasure {
                 if (v.total > 0 && v.found >= v.total && !hasNotForged(lore)) v.forged = true;
                 continue;
             }
-            if (name.startsWith("?") || name.isEmpty()) continue;                 // unfound relic
             if (name.equalsIgnoreCase(vname)) continue;                            // dimension icon
             String n = name.toLowerCase();
             if (n.equals("back") || n.equals("go back") || n.startsWith("return") || n.startsWith("next") || n.startsWith("previous") || n.equals("close")) continue;
 
             Relic r = new Relic();
+            if (name.startsWith("?")) {                                            // unfound relic: keep what the menu says about it
+                r.name = "?";
+                r.found = false;
+                StringBuilder hint = new StringBuilder();
+                for (String line : lore) {
+                    String t = line.trim();
+                    if (t.isEmpty()) continue;
+                    if (hint.length() > 0) hint.append(" ");
+                    hint.append(t);
+                    if (hint.length() > 60) break;
+                }
+                r.hint = hint.toString();
+                v.relics.add(r);
+                continue;
+            }
             r.name = name;
             for (String line : lore) {
                 Matcher m = FRAC.matcher(line);
@@ -208,49 +320,53 @@ public final class Treasure {
             v.relics.add(r);
         }
         if (v != null && (v.total > 0 || !v.relics.isEmpty())) {
+            int foundRelics = 0;
+            for (Relic r : v.relics) if (r.found) foundRelics++;
             if (v.total == 0) v.total = v.relics.size();
-            if (v.found == 0) v.found = v.relics.size();
+            if (v.found == 0) v.found = foundRelics;
             Vault old = vaults.get(vname);
             if (old != null) {
                 v.bonuses = old.bonuses;
-                v.locked = old.locked;
+                v.locked = false;
+                v.order = old.order;
+                v.left = old.left;
                 if (v.sealFortune == 0) v.sealFortune = old.sealFortune;
             }
             vaults.put(vname, v);
             dirty = true;
         }
+        // asked the server for the treasury: once it was read, close it again
+        if ((sawHeads || sawTreasury) && !isVault) Sync.done("treasures", gs);
     }
 
     /**
      * The vault heads in "The Treasury" menu:
      *   Overworld / Vault / Relics: 8/8 / Bonuses: | Fortune: x3.436 ... / Vault Seal: Forged (x1.35 Overworld Fortune)
      *   Swamp ... Vault Seal: 3 relic(s) left (x1.35 Swamp Fortune)
-     *   The Library (Locked) / Unlock in /warp
+     *   The Library (Locked) / Unlock in /warp   <- a place that does not exist (yet): never kept
+     * Returns the vault, or null for anything else / locked places.
      */
-    private static boolean parseVaultHead(String name, List<String> lore) {
+    private static Vault parseVaultHead(String name, List<String> lore) {
         boolean vaultLine = false, locked = name.contains("(Locked)");
         for (String l : lore) {
             String t = l.trim();
             if (t.equals("Vault")) vaultLine = true;
             if (t.startsWith("Unlock in")) locked = true;
         }
-        if (!vaultLine && !locked) return false;
+        if (!vaultLine && !locked) return null;
         String vname = name.replace("(Locked)", "").trim();
-        if (vname.isEmpty()) return false;
+        if (vname.isEmpty()) return null;
+        if (locked) {
+            if (vaults.remove(vname) != null) dirty = true;
+            return null;
+        }
         Vault v = vaults.get(vname);
         if (v == null) {
             v = new Vault();
             v.name = vname;
             vaults.put(vname, v);
         }
-        v.locked = locked;
-        if (locked) {
-            v.found = 0;
-            if (v.total == 0) v.total = 8;
-            v.forged = false;
-            dirty = true;
-            return true;
-        }
+        v.locked = false;
         Map<String, Double> bonuses = new LinkedHashMap<>();
         for (String line : lore) {
             Matcher r = S_RELICS.matcher(line);
@@ -272,7 +388,7 @@ public final class Treasure {
         }
         v.bonuses = bonuses;
         dirty = true;
-        return true;
+        return v;
     }
 
     private static boolean hasNotForged(List<String> lore) {
