@@ -1,0 +1,44 @@
+package dev.cobblestoneplus;
+
+import java.util.Locale;
+
+/** Parses and formats the 1.2k / 3.4M / 5.6B / 7.8T numbers the server uses. */
+final class Nums {
+    private Nums() {}
+
+    static final String NUM = "\\d[\\d.,]*[kKmMbBtT]?";
+
+    static double parse(String s) {
+        if (s == null) return 0;
+        s = s.trim().replace(",", "");
+        if (s.isEmpty()) return 0;
+        double mul = 1;
+        char c = Character.toLowerCase(s.charAt(s.length() - 1));
+        switch (c) {
+            case 'k' -> mul = 1e3;
+            case 'm' -> mul = 1e6;
+            case 'b' -> mul = 1e9;
+            case 't' -> mul = 1e12;
+            default -> {
+            }
+        }
+        if (mul != 1) s = s.substring(0, s.length() - 1);
+        try {
+            return Double.parseDouble(s) * mul;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    static String fmt(double v) {
+        double a = Math.abs(v);
+        if (a >= 1e15) return String.format(Locale.ROOT, "%.2fQa", v / 1e15);
+        if (a >= 1e12) return String.format(Locale.ROOT, "%.2fT", v / 1e12);
+        if (a >= 1e9) return String.format(Locale.ROOT, "%.2fB", v / 1e9);
+        if (a >= 1e6) return String.format(Locale.ROOT, "%.2fM", v / 1e6);
+        if (a >= 1e3) return String.format(Locale.ROOT, "%.2fk", v / 1e3);
+        if (a >= 100) return String.format(Locale.ROOT, "%.0f", v);
+        if (a == Math.rint(a)) return String.format(Locale.ROOT, "%.0f", v);
+        return String.format(Locale.ROOT, "%.2f", v);
+    }
+}
