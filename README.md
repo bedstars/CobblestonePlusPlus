@@ -1,6 +1,6 @@
 # cobblestone++
 
-Client-side Fabric QoL mod for **play.cobblestone.gg** (Minecraft 26.1.2). Nothing is ever sent to the server.
+Client-side Fabric QoL mod for **play.cobblestone.gg** (Minecraft 26.1.2, 26.2 and 26.3). Nothing is ever sent to the server.
 
 ## Feature 1 - Backpack HUD
 - Reads the action bar (`+2.90k Crying Obsidian (17.22M)`) so every block you break updates gained + total instantly.
