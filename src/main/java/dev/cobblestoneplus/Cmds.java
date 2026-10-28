@@ -96,6 +96,11 @@ final class Cmds {
                         })));
 
         var pn = onOff("pins", "Pins HUD", v -> Cfg.I.pinsHud = v)
+                .then(ClientCommands.literal("debug").executes(c -> {
+                    say(c.getSource(), "What the mod reads from the sidebar:");
+                    for (String line : Pins.debug(net.minecraft.client.Minecraft.getInstance())) say(c.getSource(), line);
+                    return 1;
+                }))
                 .then(ClientCommands.literal("forget").executes(c -> {
                     Pins.forget();
                     return say(c.getSource(), "Learned recipes cleared. Open the crafting menus to re-learn.");
@@ -172,15 +177,69 @@ final class Cmds {
                     Cfg.save();
                     return say(c.getSource(), "Mob milestones " + (Cfg.I.milestoneMobs ? "shown." : "hidden."));
                 }))
+                .then(ClientCommands.literal("others").executes(c -> {
+                    Cfg.I.milestoneOthers = !Cfg.I.milestoneOthers;
+                    Cfg.save();
+                    return say(c.getSource(), "Other worlds " + (Cfg.I.milestoneOthers ? "listed." : "hidden."));
+                }))
                 .then(ClientCommands.literal("done").executes(c -> {
                     Cfg.I.milestoneDone = !Cfg.I.milestoneDone;
                     Cfg.save();
                     return say(c.getSource(), "Finished milestones " + (Cfg.I.milestoneDone ? "shown." : "hidden."));
                 }))
+                .then(ClientCommands.literal("live").executes(c -> {
+                    Cfg.I.milestoneLive = !Cfg.I.milestoneLive;
+                    Cfg.save();
+                    return say(c.getSource(), "Live counting " + (Cfg.I.milestoneLive ? "on." : "off (only menu reads update the numbers)."));
+                }))
+                .then(ClientCommands.literal("ratio").executes(c -> {
+                    Cfg.I.milestoneRatio = !Cfg.I.milestoneRatio;
+                    Cfg.save();
+                    return say(c.getSource(), Cfg.I.milestoneRatio ? "Ratio mode on: each counted block / kill moves the milestone by the ratio learned from the menu (open /milestones now and then to teach it)." : "Ratio mode off: plain +1 per block / kill.");
+                }))
                 .then(ClientCommands.literal("forget").executes(c -> {
                     Milestones.forget();
                     return say(c.getSource(), "Milestone data cleared. Open /milestones (every page) to re-learn.");
                 }));
+
+        var feed = onOff("feed", "Feed log", v -> Cfg.I.feedLog = v)
+                .then(ClientCommands.literal("path").executes(c -> say(c.getSource(), "Log file: " + Feed.path())));
+
+        var look = ClientCommands.literal("opacity")
+                .then(ClientCommands.argument("percent", IntegerArgumentType.integer(0, 100)).executes(c -> {
+                    Cfg.I.panelOpacity = IntegerArgumentType.getInteger(c, "percent");
+                    Cfg.save();
+                    return say(c.getSource(), "Panel background: " + Cfg.I.panelOpacity + "%" + (Cfg.I.panelOpacity == 0 ? " (only the text)." : "."));
+                }));
+        var menuLook = ClientCommands.literal("menuopacity")
+                .then(ClientCommands.argument("percent", IntegerArgumentType.integer(0, 100)).executes(c -> {
+                    Cfg.I.menuOpacity = IntegerArgumentType.getInteger(c, "percent");
+                    Cfg.save();
+                    return say(c.getSource(), "Menu background: " + Cfg.I.menuOpacity + "%.");
+                }));
+        var plan = ClientCommands.literal("plan")
+                .executes(c -> {
+                    CobblestonePlus.openLater(3);
+                    return 1;
+                })
+                .then(ClientCommands.literal("global").executes(c -> {
+                    Cfg.I.focus = "";
+                    Cfg.save();
+                    return say(c.getSource(), "Tracking everything (global).");
+                }))
+                .then(ClientCommands.argument("part", StringArgumentType.greedyString()).executes(c -> {
+                    Completion.Cat cat = Completion.find(StringArgumentType.getString(c, "part"));
+                    if (cat == null) return say(c.getSource(), "Unknown part. Open /cpp plan to pick one.");
+                    Cfg.I.focus = cat.name;
+                    Cfg.save();
+                    return say(c.getSource(), "Tracking: " + cat.name);
+                }));
+        var autoMenus = ClientCommands.literal("automenus").executes(c -> {
+            Cfg.I.autoMenus = !Cfg.I.autoMenus;
+            Cfg.save();
+            return say(c.getSource(), Cfg.I.autoMenus ? "The mod may open /stats and /treasures by itself." : "Menus are never opened by the mod (REFRESH buttons still work).");
+        });
+        var where = ClientCommands.literal("where").executes(c -> say(c.getSource(), "You are in " + Worlds.describe()));
 
         var menu = ClientCommands.literal("menu").executes(c -> {
             CobblestonePlus.openLater(1);
@@ -191,7 +250,7 @@ final class Cmds {
             return 1;
         });
 
-        d.register(ClientCommands.literal("cpp").then(bp).then(bo).then(pn).then(tr).then(sh).then(ms).then(menu).then(edit)
+        d.register(ClientCommands.literal("cpp").then(bp).then(bo).then(pn).then(tr).then(sh).then(ms).then(feed).then(look).then(menuLook).then(where).then(plan).then(autoMenus).then(menu).then(edit)
                 .executes(c -> {
                     CobblestonePlus.openLater(1);
                     return 1;

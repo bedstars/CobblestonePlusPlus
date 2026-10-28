@@ -31,7 +31,7 @@ final class PinsHud {
             nameW = Math.max(nameW, Ui.tw(s.name));
             valW = Math.max(valW, Ui.tw(vals[i]));
         }
-        String note = lv.full ? "" : "open the recipe once for all steps";
+        String note = lv.stale ? "from the menu - waiting for the sidebar" : lv.full ? "" : "open the recipe once for all steps";
         int w = Math.max(Ui.tw(title) + Ui.tw(count) + 22, 7 + 9 + nameW + 10 + valW + 7);
         w = Math.max(w, Ui.tw(note) + 14);
         int h = 16 + steps.size() * 11 + 3 + (note.isEmpty() ? 0 : 11);
@@ -41,7 +41,7 @@ final class PinsHud {
         boolean all = met == steps.size();
         int head = all ? OK : Ui.ACCENT;
         Ui.rr(g, x, y, w, h, Ui.PANEL);
-        g.fill(x, y, x + 2, y + h, head);
+        Ui.stripe(g, x, y, h, head);
         Ui.text(g, title, x + 7, y + 4, head);
         Ui.text(g, count, x + w - Ui.tw(count) - 5, y + 4, all ? OK : Ui.DIM);
 

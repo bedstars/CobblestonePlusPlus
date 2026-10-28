@@ -18,7 +18,23 @@ final class Ui {
         g.text(Minecraft.getInstance().font, s, x, y, c, true);
     }
 
+    /** The panel background with the opacity chosen in the settings (0 = text only). */
+    static int panel() {
+        int a = (int) Math.round(0xC0 * Math.max(0, Math.min(100, Cfg.I.panelOpacity)) / 100.0);
+        return alpha(PANEL, a);
+    }
+
+    /** The coloured stripe at the left of a panel; hidden in text-only mode. */
+    static void stripe(GuiGraphicsExtractor g, int x, int y, int h, int c) {
+        if (Cfg.I.panelOpacity <= 4) return;
+        g.fill(x, y, x + 2, y + h, c);
+    }
+
     static void rr(GuiGraphicsExtractor g, int x, int y, int w, int h, int c) {
+        if (c == PANEL) {
+            c = panel();
+            if ((c >>> 24) == 0) return;
+        }
         g.fill(x + 1, y, x + w - 1, y + h, c);
         g.fill(x, y + 1, x + w, y + h - 1, c);
     }

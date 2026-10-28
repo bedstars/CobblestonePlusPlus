@@ -62,3 +62,27 @@ Commands: `/cpp milestones on|off|world <0-9>|mobs|done|forget`
 
 ## Build
 `gradle build` (Java 25) or push to GitHub - the Actions workflow builds the jar.
+
+## 0.8.0 changes
+- **Worlds**: only the six real worlds exist now (Overworld, Frost Castle, Swamp, Honey Tree, Infernal Citadel, The Library). Charms, seals and locked places are never shown. Which world you are in comes from the crop you farm or the Treasury item, whichever changed last (`/cpp where`).
+- **Milestones**: title shows the world name; one summary line per other world (`/cpp milestones others`).
+- **Pins fixed**: the sidebar format `PINNED (Combat Armor) [0/2]` with `Spider (0/1,700)` lines is now understood, and "Unpin Progress" in the recipe tooltip also marks a pin. `/cpp pins debug` prints what is read.
+- **Treasures**: your own finds ("You unearthed ...", "Duplicate ... Level 2/3", "On all Honey Tree crops: +7% Fortune") are read across the separate chat lines and update the vault instantly.
+- **Multipliers**: armor / tool / hand changes correct the panel immediately (shown with `~` and "updating"), then `/stats` is read and re-read up to 2 more times if the total did not move. Open Gem Shop follows the crop's "Multiplier: x" live. Expired / activated boosters trigger a refresh.
+- **Backpack**: sell / upgrade chat lines re-read the bundle every tick for 5s; bundle read every 0.25s.
+- **Shiny**: echo keeps its history while the glow flashes, also counts flashing and animating blue blocks; rush needs stable concentric ring pieces (not near players, yellow when readable). `/cpp shiny debug` shows flashes, data changes and the ring breakdown.
+- **Look**: `/cpp opacity <0-100>` (0 = only text, stripes hidden) and `/cpp menuopacity <0-100>`, also sliders in the menu (GENERAL).
+
+## 0.9.0 changes
+- **No more surprise menus.** The mod never opens `/stats` or `/treasures` by itself any more (`/cpp automenus` or the MULTI tab turns the old behaviour back on). Everything is read passively: chat, action bar, sidebar, item tooltips and any menu you open yourself. Multipliers still correct themselves instantly for armor / tool changes (shown as `estimate`) and are confirmed whenever you open `/stats` yourself.
+- **Completion marker** (always-on panel): the overall percentage with a bar, read from the `Completion` item in `/stats` (when you open it, or when it is in your inventory) and from the `[27.5%]` the server puts before your name in your own chat lines. Global mode lists the three parts closest to done.
+- **What to do next** (`/cpp plan`, button in the menu, or bind a key): every progression part (crops, milestones, treasures, gem shop, reforge, bosses, enchants, recipes, pets, AFK, charms, achievements ...) with its progress, least finished last. Click one to track only that part on screen (progress, what is left, where to do it); click it again or GLOBAL to track everything. `/cpp plan <part>` / `/cpp plan global` work too.
+- Boss Index title (`Boss Index (2/6)`) updates the bosses count when you open it.
+
+## 0.9.1-0.9.2 changes
+- **Milestones count up live, by 1.** Every block you break adds 1 to its crop (2019 -> 2020) and every mob you kill adds 1 to the mob with the same name (`Chicken` -> Chicken), so the stage bars move while you farm. Crops that are not vanilla blocks are matched through the `+x Crop (total)` action bar line (a break with no such line within 3s is taken back; a gain line with no break before it counts as 1). Tracked numbers show a `~`; opening `/milestones` puts the exact count back. `/cpp milestones live` turns it off.
+- **Ratio mode (off by default).** `/cpp milestones ratio` or the menu toggle. Every time you open `/milestones` the mod compares how much the menu count grew with how many blocks / kills it counted live and remembers that ratio per crop / mob. With the toggle on, each counted block / kill moves the milestone by that ratio instead of a plain +1 (it overrides the +1). It is learned either way, so it is ready when you switch it on.
+- **Better rows.** The crop / mob you are working on is first (gold), its numbers flash green on every +1, and each row shows the full count, the target and the percent (`2,020/2,500  80.8%`).
+- **Stage-ups from chat.** "Stage N ... completed / reached" lines finish that stage at once; finished stages also move the matching Completion category.
+- **Title, subtitle and boss bars are read** (not only chat and action bar).
+- **`/cpp feed on`** writes every server line no reader understood (chat, action bar, title, subtitle, boss bar, sidebar) to `config/cobblestoneplus/feed.log`. Send that file to get the readers matched to the server's exact wording.

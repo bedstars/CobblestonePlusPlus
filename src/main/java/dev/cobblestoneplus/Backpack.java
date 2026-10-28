@@ -114,10 +114,16 @@ public final class Backpack {
     // ------------------------------------------------------------ action bar
 
     /** Called for every incoming action bar message. */
+    private static String lastBar = "";
+    private static long lastBarAt;
+
     public static void onActionBar(String text) {
         if (text == null || text.indexOf('+') < 0) return;
         Matcher m = GAIN.matcher(text);
         long now = System.currentTimeMillis();
+        boolean dup = text.equals(lastBar) && now - lastBarAt < 100; // the same packet seen twice in one tick
+        lastBar = text;
+        lastBarAt = now;
         while (m.find()) {
             String name = m.group(2).trim();
             if (name.equalsIgnoreCase("xp")) continue;
@@ -125,6 +131,7 @@ public final class Backpack {
             double total = Nums.parse(m.group(3));
             if (gained <= 0) continue;
             Milestones.onGain(name);
+            if (!dup) Milestones.addCount(name, gained);
             Entry e = get(name);
             e.amount = total;
             e.session += gained;
@@ -136,11 +143,20 @@ public final class Backpack {
 
     // ------------------------------------------------------------ scanning
 
+    private static long rescanUntil;
+    private static final Pattern MONEY_MSG = Pattern.compile("(?i)\\b(sold|sell|selling|deposit|withdraw|upgraded|upgrade|capacity|purchased|bought|collected|claimed|unlocked)\\b");
+
+    /** A chat line that can change what is in the backpack (sold, upgraded ...): re-read the bundle every tick for a few seconds. */
+    public static void onChat(String t) {
+        if (t == null || t.contains("\u00bb")) return; // player chat
+        if (MONEY_MSG.matcher(t).find()) rescanUntil = System.currentTimeMillis() + 5000;
+    }
+
     public static void onTick(Minecraft mc) {
         if (mc.player == null) return;
         tick++;
         if (tick % 5 == 0) scanMenu(mc);
-        if (tick % 10 == 0) scanBundle(mc);
+        if (tick % 5 == 2 || System.currentTimeMillis() < rescanUntil) scanBundle(mc);
         if (dirty && tick % 200 == 0) save();
     }
 

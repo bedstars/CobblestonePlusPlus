@@ -49,7 +49,7 @@ final class BackpackHud {
         int x = 0, y = 0;
         int h = 16 + rows.size() * 11 + 4;
         Ui.rr(g, x, y, w, h, Ui.PANEL);
-        g.fill(x, y, x + 2, y + h, Ui.ACCENT);
+        Ui.stripe(g, x, y, h, Ui.ACCENT);
         Ui.text(g, "BACKPACK", x + 7, y + 4, Ui.ACCENT);
         String sub = all ? "all" : String.format(Locale.ROOT, "session %.0fm", (now - Backpack.sessionStart) / 60000.0);
         Ui.text(g, sub, x + w - Ui.tw(sub) - 5, y + 4, Ui.DIM);

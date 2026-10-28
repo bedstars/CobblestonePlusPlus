@@ -32,6 +32,9 @@ public final class Cfg {
     public W treasure = new W(1.0, 0.45);
     public W shiny = new W(0.5, 0.0);
     public W milestones = new W(0.0, 0.32);
+    public W completion = new W(0.5, 0.06);
+    public boolean completionHud = true;
+    public String focus = "";             // progression part being tracked; "" = global
     public double textScale = 1.0;   // global text size multiplier
     public boolean autoShrink = true; // shrink panels when the game window / GUI area gets smaller
     public int refWidth = 640;        // GUI width (in GUI units) at which panels are 100% size
@@ -45,6 +48,7 @@ public final class Cfg {
 
     // ---- other panels ----
     public boolean boostersHud = true;
+    public boolean autoMenus = false;     // allow the mod to open /stats /treasures by itself (interrupts farming) - off by default
     public boolean boostersAuto = true;   // keep the multiplier in sync by asking the server for /stats when something changes
     public int boostersEverySecs = 90;    // and at least this often
     public boolean pinsHud = true;
@@ -67,8 +71,16 @@ public final class Cfg {
     public int treasureWorld = 0;         // 0 = the world you are in, 1..worlds = fixed
     public boolean treasureOthers = true; // one line per other world
     public int treasureRows = 12;         // max missing / upgrade rows
-    public int worlds = 4;
+    public boolean milestoneRatio = false; // live counting uses the ratio learned from the menu instead of a plain +1 (overrides it)
+    public boolean milestoneLive = true;  // count crops / kills up on screen from the action bar and chat, between menu reads
+    public boolean feedLog = false;       // write every line no reader understood to feed.log (to teach the mod the server wording)
+    public boolean milestoneOthers = true; // one summary line per other world
+    public int worlds = 6;                // Overworld, Frost Castle, Swamp, Honey Tree, Infernal Citadel, The Library
     public int worldSize = 8;             // crops / mobs per world
+
+    // ---- look ----
+    public int panelOpacity = 100;        // 0..100 background of the on-screen panels (0 = only the text)
+    public int menuOpacity = 95;          // 0..100 background of the settings menu
 
     public static Path dir() {
         try {
@@ -99,7 +111,11 @@ public final class Cfg {
         if (I.treasure == null) I.treasure = new W(1.0, 0.45);
         if (I.shiny == null) I.shiny = new W(0.5, 0.0);
         if (I.milestones == null) I.milestones = new W(0.0, 0.32);
-        if (I.worlds < 1) I.worlds = 4;
+        if (I.completion == null) I.completion = new W(0.5, 0.06);
+        if (I.focus == null) I.focus = "";
+        if (I.worlds < 6) I.worlds = 6;
+        I.panelOpacity = Math.max(0, Math.min(100, I.panelOpacity));
+        I.menuOpacity = Math.max(0, Math.min(100, I.menuOpacity));
         if (I.boostersEverySecs < 5) I.boostersEverySecs = 90;
         if (I.treasureRows < 1) I.treasureRows = 12;
         if (I.worldSize < 1) I.worldSize = 8;

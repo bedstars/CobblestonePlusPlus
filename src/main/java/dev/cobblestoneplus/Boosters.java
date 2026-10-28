@@ -40,6 +40,7 @@ public final class Boosters {
         public String crop = "";
         public List<Row> rows = new ArrayList<>();
         public long updated;
+        public transient boolean est;   // true while the numbers are a local estimate waiting for the server's /stats
     }
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -81,11 +82,25 @@ public final class Boosters {
     }
 
     // ------------------------------------------------------------ live updates
+    //
+    // Whenever something that changes the multiplier happens (armor on / off, tool held / not held, a shop or upgrade
+    // menu closed, a purchase / booster message in chat, another crop, a pet change ...) two things happen:
+    //   1. the panel is corrected AT ONCE with a local estimate (armor off -> Armor Fortune x1, tool away -> Tool Boost x1,
+    //      and back to the remembered values when you put them on again), shown with "updating";
+    //   2. the server is asked for /stats a moment later, and asked again (up to 2 more times) when the answer still
+    //      equals the old total, because the server sometimes recalculates a second or two late.
 
-    private static String sig;
-    private static long changedAt = -1, lastAsk;
-    private static boolean wasMenu;
-    private static final Pattern BUYING = Pattern.compile("(?i)\\b(purchased|bought|upgraded|upgrade|equipped|unlocked|enchanted|crafted|forged)\\b");
+    private static String armorSig, handSig;
+    private static long changedAt = -1, lastAsk, retryAt = -1;
+    private static boolean wasMenu, expect;
+    private static int retries, estTick;
+    private static double serverTotal;
+    // remembered while the item was on / held, to restore the estimate when it comes back
+    private static double rememberArmor, rememberTool;
+    private static int fullPieces;
+    private static String toolName = "";
+    private static final Pattern BUYING = Pattern.compile("(?i)\\b(purchased|bought|upgraded|upgrade|equipped|unequipped|unlocked|enchanted|crafted|forged|reforged|hatched|claimed|expired|activated)\\b");
+    private static final Pattern SHOP_MULT = Pattern.compile("Multiplier:\\s*([\\d.,]+)\\s*x");
 
     /** Asks the server for /stats (read + closed automatically) when auto-update is on. */
     public static void request() {
@@ -97,42 +112,134 @@ public final class Boosters {
         Sync.ask("stats", true);
     }
 
+    /** Something happened that may change the multiplier: refresh soon and keep asking until the total moves. */
+    static void changed() {
+        changedAt = tick;
+        expect = true;
+        retries = 0;
+        retryAt = -1;
+        data.est = true;
+        estTick = tick;
+    }
+
     public static void onChat(String t) {
         if (t == null || t.contains("\u00bb")) return; // player chat
-        if (BUYING.matcher(t).find()) request();
+        if (BUYING.matcher(t).find()) changed();
     }
 
     private static String item(ItemStack st) {
         return st.isEmpty() ? "-" : st.getHoverName().getString() + "x" + st.getCount();
     }
 
-    private static String signature(Minecraft mc) {
+    private static String armorSignature(Minecraft mc) {
         StringBuilder sb = new StringBuilder();
-        sb.append(item(mc.player.getMainHandItem())).append('|').append(item(mc.player.getOffhandItem()));
         for (EquipmentSlot es : new EquipmentSlot[]{EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
             sb.append('|').append(item(mc.player.getItemBySlot(es)));
         }
         return sb.toString();
     }
 
+    private static String handSignature(Minecraft mc) {
+        return item(mc.player.getMainHandItem()) + '|' + item(mc.player.getOffhandItem());
+    }
+
+    private static int armorPieces(Minecraft mc) {
+        int n = 0;
+        for (EquipmentSlot es : new EquipmentSlot[]{EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
+            if (!mc.player.getItemBySlot(es).isEmpty()) n++;
+        }
+        return n;
+    }
+
+    private static String mainHandName(Minecraft mc) {
+        ItemStack st = mc.player.getMainHandItem();
+        return st.isEmpty() ? "-" : st.getHoverName().getString();
+    }
+
+    private static Row row(String part) {
+        for (Row r : data.rows) if (r.name.toLowerCase().contains(part)) return r;
+        return null;
+    }
+
+    /** Sets one row to a new value and moves the total with it. */
+    private static void scale(Row r, double nv) {
+        double old = r.mult <= 0 ? 1 : r.mult;
+        data.total = data.total / old * nv;
+        r.mult = nv;
+        data.est = true;
+        estTick = tick;
+    }
+
+    /** Instant local correction for armor / tool changes (the server confirms it a moment later). */
+    private static void estimate(Minecraft mc, boolean armorChanged, boolean handChanged) {
+        if (data.rows.isEmpty()) return;
+        if (armorChanged) {
+            Row r = row("armor");
+            if (r != null) {
+                int pieces = armorPieces(mc);
+                if (pieces == 0 && r.mult > 1) {
+                    rememberArmor = r.mult;
+                    scale(r, 1);
+                } else if (pieces >= Math.max(1, fullPieces) && rememberArmor > 1 && r.mult <= 1) {
+                    scale(r, rememberArmor);
+                }
+            }
+        }
+        if (handChanged) {
+            Row r = row("tool");
+            if (r != null && !toolName.isEmpty()) {
+                boolean holding = toolName.equals(mainHandName(mc));
+                if (holding && r.mult <= 1 && rememberTool > 1) scale(r, rememberTool);
+                else if (!holding && r.mult > 1) {
+                    rememberTool = r.mult;
+                    scale(r, 1);
+                }
+            }
+        }
+    }
+
+    /** What we know while the player wears / holds things: used to restore the estimate later. */
+    private static void remember(Minecraft mc) {
+        Row a = row("armor");
+        if (a != null && a.mult > 1) {
+            rememberArmor = a.mult;
+            fullPieces = Math.max(fullPieces, armorPieces(mc));
+        }
+        Row t = row("tool");
+        if (t != null && t.mult > 1) {
+            rememberTool = t.mult;
+            String h = mainHandName(mc);
+            if (!h.equals("-")) toolName = h;
+        }
+    }
+
     /** Armor on / off, tool held / not held, an upgrade bought (a menu was closed): ask for the new multiplier. */
     private static void watch(Minecraft mc) {
-        String s = signature(mc);
-        if (sig == null) {
-            sig = s;
+        String a = armorSignature(mc), h = handSignature(mc);
+        if (armorSig == null) {
+            armorSig = a;
+            handSig = h;
             lastAsk = tick;
             request();
             return;
         }
-        if (!s.equals(sig)) {
-            sig = s;
-            changedAt = tick;
+        if (data.est && tick - estTick > 300) data.est = false; // no answer for 15s: stop saying "updating"
+        boolean ac = !a.equals(armorSig), hc = !h.equals(handSig);
+        if (ac || hc) {
+            armorSig = a;
+            handSig = h;
+            estimate(mc, ac, hc);
+            changed();
         }
         boolean menu = Scr.get(mc) instanceof AbstractContainerScreen<?>;
-        if (wasMenu && !menu && !Sync.busy()) changedAt = tick; // closed a shop / inventory: something may have changed
+        if (wasMenu && !menu && !Sync.busy()) changed(); // closed a shop / inventory / pet menu: something may have changed
         wasMenu = menu;
-        if (changedAt >= 0 && tick - changedAt >= 10) {
+        if (changedAt >= 0 && tick - changedAt >= 6) {
             changedAt = -1;
+            lastAsk = tick;
+            request();
+        } else if (retryAt >= 0 && tick >= retryAt) {
+            retryAt = -1;
             lastAsk = tick;
             request();
         } else if (tick - lastAsk >= Math.max(5, Cfg.I.boostersEverySecs) * 20L) {
@@ -141,15 +248,44 @@ public final class Boosters {
         }
     }
 
+    /** While a Gem Shop is open the crop's own upgrade shows "Multiplier: 1.8x": follow it live while you buy. */
+    private static void liveShop(Minecraft mc, AbstractContainerScreen<?> gs) {
+        if (data.crop.isEmpty() || !gs.getTitle().getString().contains("Gem Shop")) return;
+        Row r = row("gem");
+        if (r == null) return;
+        String crop = data.crop.toLowerCase();
+        for (Slot s : gs.getMenu().slots) {
+            if (s.container == mc.player.getInventory()) continue;
+            ItemStack st = s.getItem();
+            if (st.isEmpty() || !st.getHoverName().getString().toLowerCase().startsWith(crop)) continue;
+            ItemLore l = st.get(DataComponents.LORE);
+            if (l == null) continue;
+            for (Component c : l.lines()) {
+                Matcher m = SHOP_MULT.matcher(c.getString());
+                if (m.find()) {
+                    double v = num(m.group(1));
+                    if (v > 0 && Math.abs(v - r.mult) > 0.004) {
+                        scale(r, v);
+                        expect = true;
+                        changedAt = tick;
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     public static void onTick(Minecraft mc) {
         if (mc.player == null) {
-            sig = null;
+            armorSig = null;
+            handSig = null;
             return;
         }
         tick++;
         if (Cfg.I.boostersAuto && tick % 5 == 1) watch(mc);
         if (tick % 5 != 0) return;
         if (!(Scr.get(mc) instanceof AbstractContainerScreen<?> gs)) return;
+        liveShop(mc, gs);
         for (Slot s : gs.getMenu().slots) {
             if (s.container == mc.player.getInventory()) continue;
             ItemStack st = s.getItem();
@@ -159,6 +295,7 @@ public final class Boosters {
             List<String> lines = new ArrayList<>();
             for (Component c : l.lines()) lines.add(c.getString());
             if (parse(lines)) {
+                remember(mc);
                 Sync.done("stats", gs);
                 return;
             }
@@ -199,6 +336,21 @@ public final class Boosters {
         boolean changed = data.total != d.total || data.rows.size() != d.rows.size() || !data.crop.equals(d.crop);
         data = d;
         if (changed) save();
+        Milestones.Track ct = Milestones.find(d.crop);
+        if (ct != null) Worlds.noteCrop(ct.world());
+        // the server answered: if something was expected to change but the total is still the old one, ask again shortly
+        if (expect) {
+            boolean same = Math.abs(d.total - serverTotal) < 1e-9 * Math.max(1, serverTotal);
+            if (same && retries < 2) {
+                retries++;
+                retryAt = tick + 40;
+                data.est = true;
+            } else {
+                expect = false;
+                retries = 0;
+            }
+        }
+        serverTotal = d.total;
         return true;
     }
 }

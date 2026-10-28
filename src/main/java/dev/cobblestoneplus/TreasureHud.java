@@ -55,13 +55,21 @@ final class TreasureHud {
             rows.add(new Row("NEW  " + Treasure.lastFind, Ui.GAIN, "", 0, -1, 0));
         }
 
+        // ---- the world you are in, but its vault was never read
+        int cw = Treasure.currentWorld();
+        if (ci < 0 && cw > 0) {
+            rows.add(new Row("World " + cw + "  " + Worlds.name(cw), Ui.TEXT, "", 0, -1, 0));
+            rows.add(new Row("open The Treasury, then this world's vault,", WARN, "", 0, -1, 0));
+            rows.add(new Row("once - it is remembered from then on", WARN, "", 0, -1, 0));
+        }
+
         // ---- the world you are in
         if (ci >= 0) {
             Treasure.Vault v = ws.get(ci);
             int[] lv = max ? v.levels() : null;
             int cur = lv != null ? lv[0] : v.found, goal = lv != null ? lv[1] : v.total;
             boolean done = goal > 0 && cur >= goal;
-            rows.add(new Row("World " + (ci + 1) + "  " + v.name, done ? OK : Ui.TEXT,
+            rows.add(new Row("World " + Worlds.byName(v.name) + "  " + v.name, done ? OK : Ui.TEXT,
                     cur + "/" + goal + ((max && lv == null) ? "*" : ""), done ? OK : Ui.DIM, goal > 0 ? (double) cur / goal : 0, done ? OK : SEAL));
             String seal = v.forged ? "Seal forged" : (v.left >= 0 ? "Seal: " + v.left + " relic(s) left" : "Seal not forged");
             rows.add(new Row(seal, v.forged ? OK : WARN, "", 0, -1, 0));
@@ -114,7 +122,7 @@ final class TreasureHud {
                 int[] lv = max ? v.levels() : null;
                 int cur = lv != null ? lv[0] : v.found, goal = lv != null ? lv[1] : v.total;
                 boolean done = goal > 0 && cur >= goal;
-                rows.add(new Row("W" + (i + 1) + " " + v.name + (v.forged ? "  \u2713" : ""), done ? OK : Ui.DIM,
+                rows.add(new Row("W" + Worlds.byName(v.name) + " " + v.name + (v.forged ? "  \u2713" : ""), done ? OK : Ui.DIM,
                         cur + "/" + goal + ((max && lv == null) ? "*" : ""), done ? OK : Ui.DIM, goal > 0 ? (double) cur / goal : 0, done ? OK : SEAL));
             }
         }
@@ -136,7 +144,7 @@ final class TreasureHud {
 
         int x = 0, y = 0;
         Ui.rr(g, x, y, w, h, Ui.PANEL);
-        g.fill(x, y, x + 2, y + h, SEAL);
+        Ui.stripe(g, x, y, h, SEAL);
         Ui.text(g, title, x + 7, y + 4, SEAL);
         Ui.text(g, head, x + w - Ui.tw(head) - 5, y + 4, Ui.TEXT);
 

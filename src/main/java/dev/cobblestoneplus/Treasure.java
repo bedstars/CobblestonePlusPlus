@@ -108,7 +108,7 @@ public final class Treasure {
                 if (s != null) {
                     vaults.clear();
                     if (s.vaults != null) vaults.putAll(s.vaults);
-                    vaults.values().removeIf(v -> v.locked);
+                    vaults.values().removeIf(v -> v.locked || Worlds.byName(v.name) == 0);
                     if (s.summary != null) summary = s.summary;
                 }
             }
@@ -137,30 +137,28 @@ public final class Treasure {
 
     // ------------------------------------------------------------ worlds
 
-    /** The real worlds in order (world n = n-th open vault in The Treasury). Locked / extra places are left out. */
+    /** The real worlds in order (Overworld, Frost Castle, Swamp, Honey Tree ...). Charms, seals and locked places are not worlds. */
     public static List<Vault> worldVaults() {
         List<Vault> out = new ArrayList<>();
-        for (Vault v : vaults.values()) if (!v.locked && v.order >= 0) out.add(v);
-        out.sort(java.util.Comparator.comparingInt((Vault v) -> v.order));
-        int max = Math.max(1, Cfg.I.worlds);
-        if (out.size() > max) out = new ArrayList<>(out.subList(0, max));
-        if (out.isEmpty()) {
-            // the order is not known yet (The Treasury was never opened): fall back to whatever is stored
-            for (Vault v : vaults.values()) if (!v.locked) out.add(v);
+        int max = Worlds.count();
+        for (Vault v : vaults.values()) {
+            int w = Worlds.byName(v.name);
+            if (!v.locked && w > 0 && w <= max) out.add(v);
         }
+        out.sort(java.util.Comparator.comparingInt((Vault v) -> Worlds.byName(v.name)));
         return out;
     }
 
-    /** Index into {@link #worldVaults()} (0-based) of the world shown in detail, or -1. */
+    /** The world shown in detail (fixed in the settings, else the one you are in); 0 = not known yet. */
+    public static int currentWorld() {
+        return Cfg.I.treasureWorld > 0 ? Cfg.I.treasureWorld : Worlds.current();
+    }
+
+    /** Index into {@link #worldVaults()} (0-based) of the world shown in detail, or -1 (not known / not read yet). */
     public static int currentIndex(List<Vault> ws) {
-        if (ws.isEmpty()) return -1;
-        if (Cfg.I.treasureWorld > 0) return Math.min(ws.size(), Cfg.I.treasureWorld) - 1;
-        String dim = summary.dim == null ? "" : summary.dim.trim();
-        if (!dim.isEmpty()) {
-            for (int i = 0; i < ws.size(); i++) if (ws.get(i).name.equalsIgnoreCase(dim)) return i;
-        }
-        int mw = Milestones.currentWorld();
-        if (mw > 0 && mw <= ws.size()) return mw - 1;
+        int w = currentWorld();
+        if (w <= 0) return -1;
+        for (int i = 0; i < ws.size(); i++) if (Worlds.byName(ws.get(i).name) == w) return i;
         return -1;
     }
 
@@ -177,45 +175,116 @@ public final class Treasure {
     public static String lastFind = "";
     public static long lastFindAt;
 
-    private static final Pattern FOUND = Pattern.compile("(?:Duplicate\\s+)?(.+?)\\s+Treasure\\b.*?(\\d+)\\s*/\\s*(\\d+)");
-    private static final Pattern GAIN = Pattern.compile("^\\W*\\+\\s*([\\d.,]+)\\s*%\\s*([A-Za-z][A-Za-z ]*?)\\s*$");
+    // The announcement arrives as several chat lines:
+    //   You unearthed UNCOMMON Flowering Azalea Treasure while farming! (1/30.52k)      <- first time (level 1)
+    //   Duplicate Flowering Azalea Treasure  Level 2/3                                    <- upgrade
+    //   On all Honey Tree crops:
+    //     +7% Fortune        +8% Sell Value
+    //   Click to view your /treasures
+    // Other players' finds read "<name> unearthed ..." and are not yours.
+    private static final Pattern YOU_FOUND = Pattern.compile("(?i)\\byou\\s+unearthed\\s+(.*?)\\s+Treasure\\b");
+    private static final Pattern DUP = Pattern.compile("(?i)duplicate\\s+(.*?)\\s+Treasure\\b.*?(\\d+)\\s*/\\s*(\\d+)");
+    private static final Pattern ON_ALL = Pattern.compile("(?i)on all\\s+(.+?)\\s+crops");
+    private static final Pattern GAIN = Pattern.compile("\\+\\s*([\\d.,]+)\\s*%\\s*([A-Za-z][A-Za-z ]*?)(?=\\s{2,}|\\s*\\+|\\s*$)");
+
+    private static String pendWords;           // "UNCOMMON Flowering Azalea" (rarity still in front)
+    private static int pendLvl, pendMax, pendWorld;
+    private static boolean pendNew;
+    private static long pendAt;
+    private static final List<String> pendGains = new ArrayList<>();
 
     public static void onChat(String text) {
-        if (text == null || !text.contains("Treasure") || text.contains("unearthed")) return; // others' finds are not yours
-        String found = null;
-        int lvl = 0, max = 0;
-        List<String> gains = new ArrayList<>();
-        for (String raw : text.split("\\R")) {
-            String line = raw.trim();
-            if (found == null) {
-                Matcher m = FOUND.matcher(line);
-                if (m.find()) {
-                    lvl = Integer.parseInt(m.group(2));
-                    max = Integer.parseInt(m.group(3));
-                    String[] words = m.group(1).trim().split("\\s+");
-                    for (int i = 0; i < words.length && found == null; i++) {      // drop rarity / symbols in front until a crop matches
-                        StringBuilder sb = new StringBuilder();
-                        for (int k = i; k < words.length; k++) sb.append(k > i ? " " : "").append(words[k]);
-                        Milestones.Track t = Milestones.find(sb.toString());
-                        if (t != null) {
-                            t.treasure = lvl;
-                            t.treasureMax = max;
-                            Milestones.touch();
-                            found = t.name;
-                        }
-                    }
-                    if (found == null) found = m.group(1).trim();
-                    continue;
-                }
-            }
-            Matcher g = GAIN.matcher(line);
-            if (g.find()) gains.add("+" + g.group(1) + "% " + g.group(2).trim());
+        if (text == null || text.isEmpty()) return;
+        for (String raw : text.split("\\R")) line(raw.trim());
+    }
+
+    private static void line(String line) {
+        if (line.isEmpty() || line.contains("\u00bb")) return;           // player chat
+        Matcher y = YOU_FOUND.matcher(line);
+        if (y.find()) {
+            startPending(y.group(1).trim(), 1, 3, true);
+            return;
         }
-        if (found == null) return;
-        lastFind = found + " " + lvl + "/" + max + (gains.isEmpty() ? "" : "  " + String.join("  ", gains));
+        if (line.contains("unearthed")) return;                          // somebody else's find
+        Matcher d = DUP.matcher(line);
+        if (d.find()) {
+            startPending(d.group(1).trim(), Integer.parseInt(d.group(2)), Integer.parseInt(d.group(3)), false);
+            return;
+        }
+        if (pendWords == null) return;
+        Matcher o = ON_ALL.matcher(line);
+        if (o.find()) {
+            pendWorld = Worlds.byName(o.group(1));
+        }
+        Matcher g = GAIN.matcher(line);
+        while (g.find()) pendGains.add("+" + g.group(1) + "% " + g.group(2).trim());
+        if (line.contains("/treasures") || line.toLowerCase().contains("click to view")) finishPending();
+    }
+
+    private static void startPending(String words, int lvl, int max, boolean isNew) {
+        if (pendWords != null) finishPending();
+        pendWords = words;
+        pendLvl = lvl;
+        pendMax = max;
+        pendNew = isNew;
+        pendWorld = 0;
+        pendGains.clear();
+        pendAt = System.currentTimeMillis();
+    }
+
+    /** Drops rarity / symbols in front of the name until a known crop matches. */
+    private static Milestones.Track cropOf(String words) {
+        String[] w = words.split("\\s+");
+        for (int i = 0; i < w.length; i++) {
+            StringBuilder sb = new StringBuilder();
+            for (int k = i; k < w.length; k++) sb.append(k > i ? " " : "").append(w[k]);
+            Milestones.Track t = Milestones.find(sb.toString());
+            if (t != null) return t;
+        }
+        return null;
+    }
+
+    private static void finishPending() {
+        if (pendWords == null) return;
+        String words = pendWords;
+        pendWords = null;
+        Milestones.Track t = cropOf(words);
+        String crop = t != null ? t.name : words;
+        if (t != null) {
+            t.treasure = pendLvl;
+            t.treasureMax = pendMax;
+            Milestones.touch();
+        }
+        int world = pendWorld > 0 ? pendWorld : (t != null ? t.world() : 0);
+        Vault v = world > 0 ? vaults.get(Worlds.name(world)) : null;
+        if (v != null) applyFind(v, crop, pendLvl, pendMax, pendNew);
+        lastFind = crop + " " + pendLvl + "/" + pendMax + (pendNew ? " NEW" : "") + (pendGains.isEmpty() ? "" : "  " + String.join("  ", pendGains));
         lastFindAt = System.currentTimeMillis();
+        dirty = true;
         Sync.ask("treasures", false); // seals / boosts changed: re-read them
-        Boosters.request();           // and the multiplier
+        Boosters.changed();           // and the multiplier
+    }
+
+    /** Updates the stored vault right away, so the missing list shrinks before the menu is read again. */
+    private static void applyFind(Vault v, String crop, int lvl, int max, boolean isNew) {
+        String c = crop.toLowerCase();
+        Relic hit = null;
+        for (Relic r : v.relics) if (r.found && r.name != null && r.name.toLowerCase().contains(c)) hit = r;
+        if (hit != null) {
+            hit.level = lvl;
+            hit.max = max;
+            return;
+        }
+        if (!isNew) return;
+        v.found = v.total > 0 ? Math.min(v.total, v.found + 1) : v.found + 1;
+        Relic gone = null;
+        for (Relic r : v.relics) if (!r.found && r.hint != null && r.hint.toLowerCase().contains(c)) gone = r;
+        if (gone != null) v.relics.remove(gone);
+        Relic nr = new Relic();
+        nr.name = crop;
+        nr.level = lvl;
+        nr.max = max;
+        v.relics.add(nr);
     }
 
     // ------------------------------------------------------------ scanning
@@ -231,6 +300,7 @@ public final class Treasure {
     public static void onTick(Minecraft mc) {
         if (mc.player == null) return;
         tick++;
+        if (pendWords != null && System.currentTimeMillis() - pendAt > 4000) finishPending();
         if (tick % 5 == 0) scanMenu(mc);
         if (tick % 40 == 0) scanInventory(mc);
         if (dirty && tick % 200 == 0) save();
@@ -244,8 +314,12 @@ public final class Treasure {
         String vname = "";
         if (isVault) {
             vname = title.substring("Vault:".length()).trim();
-            v = new Vault();
-            v.name = vname;
+            if (Worlds.byName(vname) == 0) isVault = false;       // not one of the real worlds
+            else {
+                v = new Vault();
+                v.name = Worlds.name(Worlds.byName(vname));      // always the canonical spelling
+                vname = v.name;
+            }
         }
         int ord = 0;
         boolean sawHeads = false, sawTreasury = false;
@@ -356,6 +430,12 @@ public final class Treasure {
         if (!vaultLine && !locked) return null;
         String vname = name.replace("(Locked)", "").trim();
         if (vname.isEmpty()) return null;
+        int wn = Worlds.byName(vname);
+        if (wn == 0) {                                   // a charm / reward / unknown place: never a world
+            if (vaults.remove(vname) != null) dirty = true;
+            return null;
+        }
+        vname = Worlds.name(wn);
         if (locked) {
             if (vaults.remove(vname) != null) dirty = true;
             return null;
@@ -448,6 +528,7 @@ public final class Treasure {
             }
         }
         if (!s.known) return;
+        Worlds.noteDim(s.dim);
         if (s.relicsFound != summary.relicsFound || s.fortune != summary.fortune || s.sealsForged != summary.sealsForged || !s.dim.equals(summary.dim) || !s.boosts.equals(summary.boosts)) dirty = true;
         summary = s;
     }

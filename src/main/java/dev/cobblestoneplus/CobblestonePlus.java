@@ -19,10 +19,10 @@ public final class CobblestonePlus implements ClientModInitializer {
     public static final String ID = "cobblestoneplus";
     public static final Logger LOG = LoggerFactory.getLogger("cobblestone++");
 
-    public static KeyMapping K_MENU, K_EDIT;
+    public static KeyMapping K_MENU, K_EDIT, K_PLAN;
     private static int pending, delay;
 
-    /** Opens a screen a couple of ticks later (a command runs while the chat screen is still open). 1 = menu, 2 = HUD editor. */
+    /** Opens a screen a couple of ticks later (a command runs while the chat screen is still open). 1 = menu, 2 = HUD editor, 3 = progress planner. */
     public static void openLater(int what) {
         pending = what;
         delay = 2;
@@ -36,30 +36,40 @@ public final class CobblestonePlus implements ClientModInitializer {
         Pins.load();
         Treasure.load();
         Milestones.load();
+        Completion.load();
         Widgets.init();
 
         KeyMapping.Category cat = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(ID, "main"));
         K_MENU = KeyMappingHelper.registerKeyMapping(new KeyMapping("key." + ID + ".menu", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_CONTROL, cat));
         K_EDIT = KeyMappingHelper.registerKeyMapping(new KeyMapping("key." + ID + ".edit", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, cat));
 
+        K_PLAN = KeyMappingHelper.registerKeyMapping(new KeyMapping("key." + ID + ".plan", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, cat));
         ClientTickEvents.END_CLIENT_TICK.register(Sync::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Backpack::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Boosters::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Pins::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Treasure::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Milestones::onTick);
+        ClientTickEvents.END_CLIENT_TICK.register(Completion::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(Shiny::onTick);
+        ClientTickEvents.END_CLIENT_TICK.register(Feed::onTick);
         ClientTickEvents.END_CLIENT_TICK.register(CobblestonePlus::onTick);
 
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             if (overlay) {
+                Feed.overlay(message.getString());
                 Backpack.onActionBar(message.getString());
             } else {
                 String t = message.getString();
+                Feed.chat(t);
                 Treasure.onChat(t);
                 Boosters.onChat(t);
+                Backpack.onChat(t);
+                Completion.onChat(t);
             }
         });
+        net.fabricmc.fabric.api.client.event.player.ClientPlayerBlockBreakEvents.AFTER.register((world, player, pos, state) ->
+                Milestones.onBreak(state.getBlock().getName().getString()));
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(ID, "panels"), (graphics, tickCounter) -> Widgets.render(graphics, false));
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> Cmds.register(dispatcher));
 
@@ -71,10 +81,11 @@ public final class CobblestonePlus implements ClientModInitializer {
         boolean free = Scr.get(mc) == null;
         while (K_MENU.consumeClick()) if (free) openLater(1);
         while (K_EDIT.consumeClick()) if (free) openLater(2);
+        while (K_PLAN.consumeClick()) if (free) openLater(3);
         if (pending != 0 && --delay <= 0) {
             int p = pending;
             pending = 0;
-            Scr.set(mc, p == 2 ? new EditorScreen() : new MenuScreen());
+            Scr.set(mc, p == 2 ? new EditorScreen() : p == 3 ? new PlanScreen() : new MenuScreen());
         }
     }
 }

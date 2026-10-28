@@ -30,6 +30,12 @@ final class Nums {
         }
     }
 
+    /** 2,020 style (full digits with separators) up to a billion, abbreviated above. */
+    static String exact(double v) {
+        if (Math.abs(v) >= 1e9) return fmt(v);
+        return String.format(Locale.ROOT, "%,.0f", v);
+    }
+
     static String fmt(double v) {
         double a = Math.abs(v);
         if (a >= 1e15) return String.format(Locale.ROOT, "%.2fQa", v / 1e15);

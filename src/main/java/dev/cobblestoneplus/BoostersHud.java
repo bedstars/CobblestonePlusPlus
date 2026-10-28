@@ -23,21 +23,22 @@ final class BoostersHud {
         rows.sort(Comparator.comparingDouble((Boosters.Row r) -> r.mult).reversed());
 
         String title = "MULTIPLIER" + (d.crop.isEmpty() ? "" : "  " + d.crop);
-        String total = "x" + Nums.fmt(d.total);
+        String total = (d.est ? "~x" : "x") + Nums.fmt(d.total);
         int nameW = 0, multW = 0, xpW = 0;
         for (Boosters.Row r : rows) {
             nameW = Math.max(nameW, Ui.tw(r.name));
             multW = Math.max(multW, Ui.tw("x" + trim(r.mult)));
             if (r.xp > 0) xpW = Math.max(xpW, Ui.tw("x" + trim(r.xp) + " xp"));
         }
-        int w = Math.max(Ui.tw(title) + Ui.tw(total) + 22, 7 + nameW + 8 + multW + (xpW > 0 ? 8 + xpW : 0) + 7);
+        int w = Math.max(Ui.tw(title) + Ui.tw(total) + 22 + (d.est ? Ui.tw((Cfg.I.autoMenus ? "updating" : "estimate")) + 6 : 0), 7 + nameW + 8 + multW + (xpW > 0 ? 8 + xpW : 0) + 7);
         int h = 16 + rows.size() * 12 + 3;
         int x = 0, y = 0;
 
         Ui.rr(g, x, y, w, h, Ui.PANEL);
-        g.fill(x, y, x + 2, y + h, Ui.GEM);
+        Ui.stripe(g, x, y, h, Ui.GEM);
         Ui.text(g, title, x + 7, y + 4, Ui.GEM);
-        Ui.text(g, total, x + w - Ui.tw(total) - 5, y + 4, Ui.GOLD);
+        Ui.text(g, total, x + w - Ui.tw(total) - 5, y + 4, d.est ? Ui.DIM : Ui.GOLD);
+        if (d.est) Ui.text(g, (Cfg.I.autoMenus ? "updating" : "estimate"), x + 7 + Ui.tw(title) + 6, y + 4, Ui.DIM);
 
         double lt = Math.log(Math.max(1.0001, d.total));
         int ry = y + 16;

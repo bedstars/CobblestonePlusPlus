@@ -55,6 +55,11 @@ public final class Milestones {
         public double count = -1;
         public int idols = -1, idolsMax = -1, treasure = -1, treasureMax = -1;
         public String bonus = "";
+        public double ratio = 1;        // learned: how much the menu count grows per +1 counted live (used only when ratio mode is on)
+        public double since;            // +1s counted live since the menu was last read
+        public double countRead = -1;   // the count the menu showed when it was last read
+        public transient boolean est;   // count moved on by live tracking since the last menu read
+        public transient long bumpAt;   // when it last went up (the panel flashes it)
         public Stage[] stages = new Stage[STAGES];
 
         public int world() {
@@ -172,6 +177,188 @@ public final class Milestones {
         save();
     }
 
+    // ------------------------------------------------------------ live counting
+    //
+    // The menu is only read when you open it. In between the count moves on by itself, one at a time:
+    //   - every block you break adds 1 to its crop (2019 broken -> break one -> 2020);
+    //   - every mob you kill adds 1 to the mob with the same name ("Chicken" -> Chicken);
+    //   - a "Stage N ... completed" line finishes that stage at once.
+    // Stage % = count / stage target (13,999 / 25,000 = 55.996%), so the bars follow. Opening the menu again puts
+    // the exact count back.
+    //
+    // The block you break is matched to a crop by its name. Crops that are not vanilla blocks cannot be matched,
+    // so those go to the crop whose "+x Crop (total)" line showed on the action bar last, and are taken back
+    // if no such line follows within 3s (a block that gave nothing). A gain line that has no break before it
+    // (broken by an enchant, or the break event did not fire) counts as one block itself.
+
+    private static final class Credit {
+        Track t;
+        long at;
+        boolean guess;
+    }
+
+    private static final java.util.ArrayDeque<Credit> credits = new java.util.ArrayDeque<>();
+    private static final java.util.Set<Integer> counted = new java.util.HashSet<>();
+    private static final Map<Integer, Track> near = new java.util.HashMap<>();
+    private static int lastSwing = -100;
+    /** The crop / mob counted last, shown first on screen. */
+    static Track lastBumped;
+
+    private static Track byName(Map<String, Track> m, String name) {
+        if (name == null || name.isEmpty()) return null;
+        Track t = m.get(name);
+        if (t != null) return t;
+        for (Track c : m.values()) if (c.name.equalsIgnoreCase(name.trim())) return c;
+        return null;
+    }
+
+    private static void add(Track t, double d) {
+        if (!Cfg.I.milestoneLive || d == 0) return;
+        if (t.count < 0) {
+            Stage n = t.next();
+            if (n == null) return;
+            t.count = n.target * n.pct / 100.0;
+        }
+        // ratio mode: one counted block / kill moves the count by what the menu showed it is really worth
+        double step = Cfg.I.milestoneRatio && t.ratio > 0 ? d * t.ratio : d;
+        t.count = Math.max(0, t.count + step);
+        t.since += d;
+        t.est = true;
+        if (d > 0) {
+            t.bumpAt = System.currentTimeMillis();
+            lastBumped = t;
+        }
+        recompute(t);
+        dirty = true;
+    }
+
+    private static void recompute(Track t) {
+        for (int i = 0; i < STAGES; i++) {
+            Stage s = t.stages[i];
+            if (s == null || s.target <= 0) continue;
+            boolean was = s.done();
+            s.pct = Math.min(100, t.count * 100.0 / s.target);
+            if (!was && s.done()) Completion.bump(t.mob ? "Mob Milestone" : "Crop Milestone", 1);
+        }
+    }
+
+    /** A block was broken (by you, client side). */
+    public static void onBreak(String blockName) {
+        if (!Cfg.I.milestoneLive) return;
+        Track t = inText(blockName, crops);
+        boolean guess = false;
+        if (t == null) {
+            t = byName(crops, lastCrop);
+            guess = true;
+        }
+        if (t == null) return;
+        add(t, 1);
+        Credit c = new Credit();
+        c.t = t;
+        c.at = System.currentTimeMillis();
+        c.guess = guess;
+        credits.add(c);
+        while (credits.size() > 64) credits.poll();
+    }
+
+    /** A "+x Crop (total)" action bar line: it confirms (or corrects) the block that was just counted. */
+    public static void addCount(String name, double gained) {
+        Track x = byName(crops, name);
+        if (x == null) return;
+        Credit c = credits.poll();
+        if (c == null) add(x, 1);
+        else if (c.t != x) {
+            add(c.t, -1);
+            add(x, 1);
+        }
+    }
+
+    private static void expire() {
+        long now = System.currentTimeMillis();
+        while (!credits.isEmpty() && now - credits.peek().at > 3000) {
+            Credit c = credits.poll();
+            if (c.guess) add(c.t, -1);
+        }
+    }
+
+    private static final Pattern STAGE_UP = Pattern.compile(
+            "(?i)\\bstage\\s+(\\d)\\b.*\\b(?:complete[d]?|reached|unlocked|finished|achieved)|\\b(?:complete[d]?|reached|unlocked|finished|achieved)\\b.*\\bstage\\s+(\\d)\\b");
+
+    private static Track inText(String line, Map<String, Track> m) {
+        Track best = null;
+        if (line == null) return null;
+        String low = line.toLowerCase(Locale.ROOT);
+        for (Track t : m.values()) {
+            String n = t.name.toLowerCase(Locale.ROOT);
+            int i = low.indexOf(n);
+            if (i < 0) continue;
+            boolean l = i == 0 || !Character.isLetter(low.charAt(i - 1));
+            boolean r = i + n.length() >= low.length() || !Character.isLetter(low.charAt(i + n.length()));
+            if (l && r && (best == null || t.name.length() > best.name.length())) best = t;
+        }
+        return best;
+    }
+
+    /** Chat / title / boss bar / action bar line (not player chat). True when it was understood. */
+    public static boolean onText(String line) {
+        if (!Cfg.I.milestoneLive || line == null || line.indexOf('\u00bb') >= 0) return false;
+        Matcher su = STAGE_UP.matcher(line);
+        if (su.find()) {
+            Track t = inText(line, crops);
+            if (t == null) t = inText(line, mobs);
+            if (t != null) {
+                int n = Integer.parseInt(su.group(1) != null ? su.group(1) : su.group(2));
+                if (n >= 1 && n <= STAGES && t.stages[n - 1] != null && t.stages[n - 1].target > 0) {
+                    if (t.count < t.stages[n - 1].target) t.count = t.stages[n - 1].target;
+                    t.est = true;
+                    recompute(t);
+                    dirty = true;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Mob kills: a living thing near you whose name is a mob milestone ("Chicken") that dies, or vanishes right
+     * next to you, shortly after you swung, counts as one kill.
+     */
+    private static void scanKills(Minecraft mc) {
+        if (mc.player.swinging) lastSwing = tick;
+        if (!Cfg.I.milestoneLive || tick % 2 != 0 || mobs.isEmpty()) return;
+        boolean recent = tick - lastSwing <= 30;
+        java.util.Set<Integer> present = new java.util.HashSet<>();
+        for (net.minecraft.world.entity.Entity e : mc.level.entitiesForRendering()) {
+            if (!(e instanceof net.minecraft.world.entity.LivingEntity le) || e == mc.player) continue;
+            if (e instanceof net.minecraft.world.entity.player.Player) continue;
+            int id = e.getId();
+            present.add(id);
+            if (e.distanceTo(mc.player) > 10) continue;
+            if (le.isDeadOrDying()) {
+                near.remove(id);
+                if (counted.add(id) && recent) {
+                    Track t = inText(e.getName().getString(), mobs);
+                    if (t != null) add(t, 1);
+                }
+                continue;
+            }
+            if (!near.containsKey(id)) {
+                Track t = inText(e.getName().getString(), mobs);
+                if (t != null) near.put(id, t);
+            }
+        }
+        // gone without ever showing as dead (the server removes it at once): killed if it was right next to you
+        java.util.Iterator<Map.Entry<Integer, Track>> it = near.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, Track> en = it.next();
+            if (present.contains(en.getKey())) continue;
+            it.remove();
+            if (recent && counted.add(en.getKey())) add(en.getValue(), 1);
+        }
+        counted.retainAll(present);
+    }
+
     // ------------------------------------------------------------ queries
 
     public static Track find(String name) {
@@ -196,6 +383,7 @@ public final class Milestones {
             lastCrop = t.name;
             if (!first) Boosters.request(); // another crop = another multiplier
         }
+        if (t != null && t.world() > 0) Worlds.noteCrop(t.world());
         if (t != null && t.world() > 0 && t.world() != lastWorld) {
             lastWorld = t.world();
             dirty = true;
@@ -205,6 +393,8 @@ public final class Milestones {
     /** World shown on screen: the fixed one from settings, else the world of the crop you are farming. 0 = unknown. */
     public static int currentWorld() {
         if (Cfg.I.milestoneWorld > 0) return Cfg.I.milestoneWorld;
+        int cw = Worlds.current();
+        if (cw > 0) return cw;
         if (lastWorld > 0) return lastWorld;
         Track t = find(Boosters.data.crop);
         return t == null ? 0 : t.world();
@@ -221,6 +411,20 @@ public final class Milestones {
         return best;
     }
 
+    /** {crops left, mobs left, crops known, mobs known} for one world (left = not completely finished). */
+    public static int[] summary(int world) {
+        int[] r = new int[4];
+        for (Track t : forWorld(false, world)) {
+            r[2]++;
+            if (!t.complete()) r[0]++;
+        }
+        for (Track t : forWorld(true, world)) {
+            r[3]++;
+            if (!t.complete()) r[1]++;
+        }
+        return r;
+    }
+
     public static List<Track> forWorld(boolean mob, int world) {
         List<Track> out = new ArrayList<>();
         for (Track t : (mob ? mobs : crops).values()) if (t.world() == world) out.add(t);
@@ -233,6 +437,14 @@ public final class Milestones {
     public static void onTick(Minecraft mc) {
         if (mc.player == null) return;
         tick++;
+        expire();
+        if (mc.level != null) {
+            try {
+                scanKills(mc);
+            } catch (Throwable t) {
+                if (tick % 600 == 0) CobblestonePlus.LOG.warn("Kill counting failed", t);
+            }
+        }
         if (tick % 5 == 0) scanMenu(mc);
         if (dirty && tick % 200 == 0) save();
     }
@@ -289,7 +501,16 @@ public final class Milestones {
                     String line = raw.trim();
                     Matcher c = COUNT.matcher(line);
                     if (c.find()) {
-                        t.count = Nums.parse(c.group(1));
+                        double nc = Nums.parse(c.group(1));
+                        // learn the ratio (always, so it is ready when ratio mode is switched on)
+                        if (t.since >= 1 && t.countRead >= 0 && nc > t.countRead) {
+                            double r = (nc - t.countRead) / t.since;
+                            if (r > 0.01 && r < 100) t.ratio = Math.abs(r - 1) < 0.02 ? 1 : (t.ratio * 0.5 + r * 0.5);
+                        }
+                        t.count = nc;
+                        t.countRead = nc;
+                        t.since = 0;
+                        t.est = false;
                         continue;
                     }
                     Matcher id = IDOLS.matcher(line);

@@ -24,6 +24,7 @@ final class Sync {
     private static int tick, sentAt = -1000, quietUntil;
 
     static void ask(String cmd, boolean force) {
+        if (!force && !Cfg.I.autoMenus) return; // never open a menu on its own unless the player allowed it (it stops farming)
         if (force) forced.add(cmd);
         if (!queue.contains(cmd) && !cmd.equals(active)) queue.add(cmd);
     }
@@ -51,7 +52,7 @@ final class Sync {
             }
             return;
         }
-        if (queue.isEmpty() || tick < 100 || tick - sentAt < 60) return;
+        if (queue.isEmpty() || tick < 100 || tick - sentAt < 30) return;
         String cmd = queue.peek();
         boolean force = forced.contains(cmd);
         if (!force && s != null) return;
