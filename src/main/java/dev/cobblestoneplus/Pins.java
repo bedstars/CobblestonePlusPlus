@@ -240,6 +240,16 @@ public final class Pins {
         return out;
     }
 
+    private static String esc(String s) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (ch >= 0x20 && ch < 0x7F) sb.append(ch);
+            else sb.append(String.format("\\u%04x", (int) ch));
+        }
+        return sb.toString();
+    }
+
     /** Raw sidebar lines (for /cpp pins debug). */
     public static List<String> debug(Minecraft mc) {
         List<String> out = new ArrayList<>();
@@ -251,10 +261,19 @@ public final class Pins {
             out.add("could not read the sidebar: " + t);
             return out;
         }
+        out.add("sidebar objective: " + (mc.level.getScoreboard().getDisplayObjective(DisplaySlot.SIDEBAR) == null
+                ? "NONE (the sidebar is not a real scoreboard here)" : "present"));
         out.add("sidebar lines: " + lines.size() + "   pinned in menu: " + (pinnedName == null ? "-" : pinnedName));
+        StringBuilder dump = new StringBuilder();
+        for (String l : lines) dump.append(esc(l)).append('\n');
+        try {
+            Files.writeString(Cfg.dir().resolve("sidebar-dump.txt"), dump.toString());
+            out.add("raw lines (glyphs as \\uXXXX) written to " + Cfg.dir().resolve("sidebar-dump.txt"));
+        } catch (Throwable ignored) {
+        }
         for (String l : lines) {
             Step st = parseStep(l);
-            out.add("  [" + l + "]" + (HEADER.matcher(l).find() ? "  <- PINNED header" : st != null ? "  -> " + st.name + " " + Nums.fmt(st.have) + "/" + Nums.fmt(st.need) : ""));
+            out.add("  [" + esc(l) + "]" + (HEADER.matcher(l).find() ? "  <- PINNED header" : st != null ? "  -> " + st.name + " " + Nums.fmt(st.have) + "/" + Nums.fmt(st.need) : ""));
         }
         out.add("learned recipes: " + recipes.size());
         return out;

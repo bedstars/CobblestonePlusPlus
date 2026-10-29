@@ -568,7 +568,7 @@ public final class Milestones {
     // A block that does not look like a crop by name (a pattern / concrete block) is learned: the "+x Crop"
     // action bar line that shows while that block is what you mine says which crop it is (saved for next time).
 
-    private static final Pattern FARMED = Pattern.compile("(?i)\\bFARMED\\b\\D{0,8}?(" + Nums.NUM + ")");
+    private static final Pattern FARMED = Pattern.compile("(?i)FARMED\\D*?(" + Nums.NUM + ")");
     private static double farmedPrev = -1;
     private static double sessionFarmed;
     private static final java.util.ArrayDeque<net.minecraft.world.level.block.Block> aimWin = new java.util.ArrayDeque<>();
@@ -650,7 +650,10 @@ public final class Milestones {
                 break;
             }
         }
-        if (v < 0) return;
+        if (v < 0) {
+            if (tick % 20 == 0) farmedNote = "no FARMED line - run /cpp pins debug";
+            return;
+        }
         if (farmedPrev < 0 || v < farmedPrev) {
             farmedPrev = v;
             return;

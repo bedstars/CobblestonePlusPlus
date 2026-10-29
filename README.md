@@ -79,6 +79,12 @@ Commands: `/cpp milestones on|off|world <0-9>|mobs|done|forget`
 - **What to do next** (`/cpp plan`, button in the menu, or bind a key): every progression part (crops, milestones, treasures, gem shop, reforge, bosses, enchants, recipes, pets, AFK, charms, achievements ...) with its progress, least finished last. Click one to track only that part on screen (progress, what is left, where to do it); click it again or GLOBAL to track everything. `/cpp plan <part>` / `/cpp plan global` work too.
 - Boss Index title (`Boss Index (2/6)`) updates the bosses count when you open it.
 
+## 0.9.13
+- FARMED matching has no length limit between the word and the number (hoe glyph + colour / spacing characters), so the first number after `ꜰᴀʀᴍᴇᴅ` is the amount and the `[#113]` placement is ignored.
+
+## 0.9.12
+- FARMED line matching is looser (any text up to 24 characters between the word and the number, other-script digits folded). `/cpp pins debug` now says whether the sidebar is a real scoreboard and writes every line with glyphs as `\uXXXX` to `sidebar-dump.txt`; the milestones status line says `no FARMED line` when it cannot find it.
+
 ## 0.9.11
 - **Milestones count from the sidebar `FARMED` line** (new default, `/cpp milestones source farmed`; existing configs are switched over once). FARMED grows by exactly what the server counted, so the amount is accurate; the crop is the block you are mining (most of the last 3s under the crosshair). A block that does not look like a crop by name (pattern / concrete block) is learned from the `+x Crop` action bar line and remembered in `milestones.json`. The status line shows `farmed | aim: Brown Concrete Powder -> Beehive | +120 Beehive`. `blocks` / `mine` are still there.
 - **Completion** only reads the real `/stats` Completion item (it must list the known categories: Crops Discovered, Crop Milestones ...). The team "Completion" item (Created / Members / Upgrades) was being picked up instead; wrong data saved earlier is discarded on start.

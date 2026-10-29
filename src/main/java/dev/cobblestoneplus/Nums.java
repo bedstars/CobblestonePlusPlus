@@ -40,6 +40,14 @@ final class Nums {
         StringBuilder sb = null;
         for (int i = 0; i < s.length(); i++) {
             char ch = s.charAt(i);
+            if (ch >= 0x100 && Character.isDigit(ch)) {
+                if (sb == null) {
+                    sb = new StringBuilder(s.length());
+                    sb.append(s, 0, i);
+                }
+                sb.append((char) ('0' + Character.digit(ch, 10)));
+                continue;
+            }
             int k = ch < 0x100 ? -1 : SC_FROM.indexOf(ch);
             if (k >= 0 && sb == null) {
                 sb = new StringBuilder(s.length());
