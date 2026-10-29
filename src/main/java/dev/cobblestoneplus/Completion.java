@@ -51,6 +51,25 @@ public final class Completion {
     public static Data data = new Data();
     private static int tick;
 
+    /** The categories of the real /stats Completion item. Other menus have "Completion" items too (team: Created / Members / Upgrades) - they are not this one. */
+    private static final String[] KNOWN = {
+            "crops discovered", "crop milestones", "crop idols", "treasure levels", "gem shop levels", "worlds unlocked",
+            "reforge tiers", "archipelago", "mob milestones", "bosses defeated", "enchants unlocked", "enchant levels",
+            "recipes unlocked", "gear crafted", "omnitool awakened", "fish species", "shrine levels", "pearl upgrade levels",
+            "afk upgrade levels", "afk milestones", "pets discovered", "pet slots", "achievements", "charms"};
+
+    private static boolean isKnown(String name) {
+        String n = name.toLowerCase(Locale.ROOT).trim();
+        for (String k : KNOWN) if (k.equals(n)) return true;
+        return false;
+    }
+
+    private static int knownCount(List<Cat> cats) {
+        int n = 0;
+        for (Cat c : cats) if (isKnown(c.name)) n++;
+        return n;
+    }
+
     private static final Pattern PCT = Pattern.compile("(\\d+(?:[.,]\\d+)?)\\s*%");
     private static final Pattern CAT = Pattern.compile("^[^A-Za-z]*([A-Za-z][A-Za-z' ]*?)\\s*[:\\u00bb>\\-]*\\s*(" + Nums.NUM + ")\\s*/\\s*(" + Nums.NUM + ")\\b.*$");
     private static final Pattern PREFIX = Pattern.compile("\\[(\\d+(?:\\.\\d+)?)\\s*%\\]");
@@ -61,7 +80,7 @@ public final class Completion {
             Path p = Cfg.dir().resolve("completion.json");
             if (Files.exists(p)) {
                 Data d = GSON.fromJson(Files.readString(p), Data.class);
-                if (d != null && d.cats != null) data = d;
+                if (d != null && d.cats != null && knownCount(d.cats) >= 4) data = d; // data read from a wrong item is thrown away
             }
         } catch (Throwable t) {
             CobblestonePlus.LOG.warn("Could not read completion.json", t);
@@ -156,7 +175,7 @@ public final class Completion {
         }
         List<Cat> cats = new ArrayList<>();
         for (String raw : lines) {
-            Matcher m = CAT.matcher(raw.trim());
+            Matcher m = CAT.matcher(Nums.fold(raw).replaceAll("[^\\x20-\\x7E]", " ").trim());
             if (!m.find()) continue;
             Cat c = new Cat();
             c.name = m.group(1).trim();
@@ -164,7 +183,7 @@ public final class Completion {
             c.max = Nums.parse(m.group(3));
             if (c.max > 0) cats.add(c);
         }
-        if (cats.isEmpty()) return false;
+        if (knownCount(cats) < 4) return false; // not the /stats Completion item
         Data d = new Data();
         if (pct < 0) {
             double c = 0, m = 0;

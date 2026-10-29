@@ -78,7 +78,7 @@ public final class Pins {
     private static boolean dirty;
 
     private static final String N = Nums.NUM;
-    private static final Pattern HEADER = Pattern.compile("PINNED\\s*(?:\\(([^)]*)\\))?\\s*\\[(\\d+)\\s*/\\s*(\\d+)\\]");
+    private static final Pattern HEADER = Pattern.compile("(?i)PINNED\\s*(?:\\(([^)]*)\\))?\\s*\\[(\\d+)\\s*/\\s*(\\d+)\\]");
     private static final Pattern PAREN = Pattern.compile("^[^A-Za-z]*([A-Za-z][A-Za-z' #]*?)\\s*\\(\\s*(" + N + ")\\s*/\\s*(" + N + ")\\s*\\)\\s*$");
     private static final Pattern VERB = Pattern.compile("(?i)\\s+(slain|killed|kills|farmed|collected|mined|crafted|found|caught)$");
     private static final Pattern ITEM = Pattern.compile("^[^\\dA-Za-z]*(" + N + ")x?\\s+(.+?)\\s*\\((" + N + ")\\)\\s*$");
@@ -177,27 +177,32 @@ public final class Pins {
             ItemLore l = st.get(DataComponents.LORE);
             if (l == null) continue;
             boolean header = false, unpin = false, pin = false;
-            List<Step> steps = new ArrayList<>();
+            List<Step> afterHeader = new ArrayList<>(), anyLine = new ArrayList<>();
             for (Component c : l.lines()) {
-                String t = c.getString().trim();
+                String t = Nums.fold(c.getString()).trim();
+                String low = t.toLowerCase(Locale.ROOT);
                 if (t.contains("Unpin Progress")) unpin = true;
-                else if (t.contains("Pin Progress")) pin = true;
-                if (t.startsWith("Recipe") || t.startsWith("Requirements")) {
+                else if (low.contains("pin progress")) pin = true;
+                if (low.startsWith("recipe") || low.startsWith("requirement") || low.startsWith("ingredient")
+                        || low.startsWith("needs") || low.startsWith("required") || low.startsWith("cost")) {
                     header = true;
                     continue;
                 }
-                if (!header) continue;
                 Step step = parseStep(t);
-                if (step != null) steps.add(step);
+                if (step == null) continue;
+                anyLine.add(step);
+                if (header) afterHeader.add(step);
             }
-            String name = st.getHoverName().getString().trim();
+            String name = Nums.fold(st.getHoverName().getString()).trim();
             if (unpin) {
                 pinnedName = name;
                 pinnedAt = System.currentTimeMillis();
             } else if (pin && pinnedName != null && key(pinnedName).equals(key(name))) {
                 pinnedName = null;
             }
-            if (!header || steps.isEmpty()) continue;
+            // a recipe is an item with a requirements header, or any item that offers "Pin Progress" and lists steps
+            List<Step> steps = header && !afterHeader.isEmpty() ? afterHeader : (pin || unpin) ? anyLine : new ArrayList<>();
+            if (steps.isEmpty()) continue;
             Recipe old = recipes.get(name);
             Recipe r = new Recipe();
             r.name = name;
@@ -230,7 +235,7 @@ public final class Pins {
             if (e.owner().startsWith("#")) continue;
             Component c = e.display() != null ? e.display()
                     : PlayerTeam.formatNameForTeam(sb.getPlayersTeam(e.owner()), Component.literal(e.owner()));
-            out.add(c.getString());
+            out.add(Nums.fold(c.getString()));
         }
         return out;
     }
@@ -288,6 +293,26 @@ public final class Pins {
                 pinnedAt = System.currentTimeMillis();
             }
             return;
+        }
+        // no readable PINNED header: step lines on the sidebar that belong to one learned recipe are the pin
+        if (!recipes.isEmpty()) {
+            List<Step> shown = new ArrayList<>();
+            for (String ln : lines) {
+                Step s = parseStep(ln);
+                if (s != null) shown.add(s);
+                else if (!shown.isEmpty()) break;
+            }
+            if (!shown.isEmpty()) {
+                Live lv = build(shown, 0, 0, "");
+                if (lv.full) {
+                    int met = 0;
+                    for (Step s : lv.steps) if (s.met()) met++;
+                    lv.done = met;
+                    lv.total = lv.steps.size();
+                    live = lv;
+                    return;
+                }
+            }
         }
         // nothing in the sidebar: if the menu says something was just pinned, show it from the learned recipe
         if (pinnedName != null && System.currentTimeMillis() - pinnedAt < 20_000) {

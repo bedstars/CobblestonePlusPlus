@@ -79,6 +79,11 @@ Commands: `/cpp milestones on|off|world <0-9>|mobs|done|forget`
 - **What to do next** (`/cpp plan`, button in the menu, or bind a key): every progression part (crops, milestones, treasures, gem shop, reforge, bosses, enchants, recipes, pets, AFK, charms, achievements ...) with its progress, least finished last. Click one to track only that part on screen (progress, what is left, where to do it); click it again or GLOBAL to track everything. `/cpp plan <part>` / `/cpp plan global` work too.
 - Boss Index title (`Boss Index (2/6)`) updates the bosses count when you open it.
 
+## 0.9.11
+- **Milestones count from the sidebar `FARMED` line** (new default, `/cpp milestones source farmed`; existing configs are switched over once). FARMED grows by exactly what the server counted, so the amount is accurate; the crop is the block you are mining (most of the last 3s under the crosshair). A block that does not look like a crop by name (pattern / concrete block) is learned from the `+x Crop` action bar line and remembered in `milestones.json`. The status line shows `farmed | aim: Brown Concrete Powder -> Beehive | +120 Beehive`. `blocks` / `mine` are still there.
+- **Completion** only reads the real `/stats` Completion item (it must list the known categories: Crops Discovered, Crop Milestones ...). The team "Completion" item (Created / Members / Upgrades) was being picked up instead; wrong data saved earlier is discarded on start.
+- **Pins**: the PINNED header is matched case-insensitively and in small caps; recipes are also learned from any item that offers "Pin Progress" and lists steps; if the PINNED header cannot be read, sidebar step lines that belong to one learned recipe are shown as the pin.
+
 ## 0.9.10
 - Crops whose block has no crop name (texture pack / pattern block) are now learned from the floor: the block that makes up most of the floor under you while a `+x Crop` line shows belongs to that crop, so every one of them breaking near you counts (before, only the block you aimed at counted: ~50 for 6000 blocks).
 

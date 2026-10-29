@@ -108,6 +108,7 @@ public final class Milestones {
     private static final class Save {
         Map<String, Track> crops = new LinkedHashMap<>();
         Map<String, Track> mobs = new LinkedHashMap<>();
+        Map<String, String> blocks = new LinkedHashMap<>();
         int lastWorld;
     }
 
@@ -138,6 +139,8 @@ public final class Milestones {
                     if (s.crops != null) crops.putAll(s.crops);
                     if (s.mobs != null) mobs.putAll(s.mobs);
                     lastWorld = s.lastWorld;
+                    learnedNames.clear();
+                    if (s.blocks != null) learnedNames.putAll(s.blocks);
                     fix(crops);
                     fix(mobs);
                 }
@@ -162,6 +165,7 @@ public final class Milestones {
             Save s = new Save();
             s.crops = crops;
             s.mobs = mobs;
+            s.blocks = learnedNames;
             s.lastWorld = lastWorld;
             Files.writeString(Cfg.dir().resolve("milestones.json"), GSON.toJson(s));
             dirty = false;
@@ -246,6 +250,11 @@ public final class Milestones {
     }
 
     private static void add(Track t, double d) {
+        add(t, d, false);
+    }
+
+    /** raw: the amount is exact (the server's own FARMED growth), never scaled by the learned ratio. */
+    private static void add(Track t, double d, boolean raw) {
         if (!Cfg.I.milestoneLive || d == 0) return;
         if (t.count < 0) {
             Stage n = t.next();
@@ -253,7 +262,7 @@ public final class Milestones {
             t.count = n.target * n.pct / 100.0;
         }
         // ratio mode: one counted block / kill moves the count by what the menu showed it is really worth
-        double step = Cfg.I.milestoneRatio && t.ratio > 0 ? d * t.ratio : d;
+        double step = !raw && Cfg.I.milestoneRatio && t.ratio > 0 ? d * t.ratio : d;
         t.count = Math.max(0, t.count + step);
         t.since += d;
         t.est = true;
@@ -309,6 +318,14 @@ public final class Milestones {
     /** One short line for the bottom of the milestones panel: what the live counter sees (screenshot it when it is stuck). */
     public static String status() {
         if (!Cfg.I.milestoneLive) return "live counting off";
+        if ("farmed".equals(Cfg.I.milestoneSource)) {
+            if (crops.isEmpty()) return "open /milestones once";
+            net.minecraft.world.level.block.Block tb = dominantAim(null);
+            Track tt = tb == null ? null : trackOf(tb);
+            String f = "farmed | aim: " + (tb == null ? "none" : tb.getName().getString()) + " -> " + (tt == null ? "?" : tt.name)
+                    + " | " + farmedNote;
+            return f.length() > 72 ? f.substring(0, 72) : f;
+        }
         if (!"blocks".equals(Cfg.I.milestoneSource) && !"mine".equals(Cfg.I.milestoneSource)) return "source: " + Cfg.I.milestoneSource;
         if (lastErr != null) return "error: " + lastErr;
         if (crops.isEmpty()) return "open /milestones once";
@@ -319,6 +336,8 @@ public final class Milestones {
 
     /** Block -> crop, learned from the "Warp to Crop" menu (its items are the crop blocks, whatever the texture pack shows). */
     private static final Map<net.minecraft.world.level.block.Block, Track> learned = new java.util.HashMap<>();
+    /** Block name -> crop name, learned while mining (saved): a crop that looks like another block. */
+    private static final Map<String, String> learnedNames = new LinkedHashMap<>();
 
     private static void learnWarp(Minecraft mc) {
         if (tick % 10 != 0 || crops.isEmpty()) return;
@@ -349,6 +368,11 @@ public final class Milestones {
     private static Track trackOf(net.minecraft.world.level.block.Block b) {
         Track l = learned.get(b);
         if (l != null) return l;
+        String ln = learnedNames.get(b.getName().getString());
+        if (ln != null) {
+            Track lt = find(ln);
+            if (lt != null) return lt;
+        }
         Track t = blockTrack.get(b);
         if (t != null) return t;
         t = freqMap.get(b);
@@ -537,28 +561,118 @@ public final class Milestones {
         lastGainAt = System.currentTimeMillis();
     }
 
-    // ---- optional source: the sidebar "FARMED ... 738.10k" line (set with /cpp milestones source farmed)
+    // ---- source "farmed" (default): the sidebar "FARMED ... 742.74k" line says HOW MANY, the block you mine says WHICH
+    //
+    // The server's FARMED line grows by exactly the blocks it counted (yours and your enchants'), so it is the
+    // accurate amount. The crop is the one you are mining: the block under your crosshair (most of the last 3s).
+    // A block that does not look like a crop by name (a pattern / concrete block) is learned: the "+x Crop"
+    // action bar line that shows while that block is what you mine says which crop it is (saved for next time).
 
     private static final Pattern FARMED = Pattern.compile("(?i)\\bFARMED\\b\\D{0,8}?(" + Nums.NUM + ")");
     private static double farmedPrev = -1;
+    private static double sessionFarmed;
+    private static final java.util.ArrayDeque<net.minecraft.world.level.block.Block> aimWin = new java.util.ArrayDeque<>();
+    private static String farmedNote = "waiting for FARMED";
 
-    private static void scanFarmed(Minecraft mc) {
-        if (!Cfg.I.milestoneLive || !"farmed".equals(Cfg.I.milestoneSource) || tick % 10 != 0) return;
+    private static void trackAim(Minecraft mc) throws Exception {
+        Object hr = hitResult(mc);
+        if (hr instanceof net.minecraft.world.phys.BlockHitResult b && b.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK) {
+            net.minecraft.world.level.block.state.BlockState st = mc.level.getBlockState(b.getBlockPos());
+            if (!st.isAir()) {
+                aimWin.addLast(st.getBlock());
+                while (aimWin.size() > 60) aimWin.pollFirst();
+            }
+        } else if (!aimWin.isEmpty() && tick % 4 == 0) {
+            aimWin.pollFirst(); // looking away: the old aim fades out
+        }
+    }
+
+    /** The block you aimed at most in the last ~3s, and its share of that window (0..1). */
+    private static net.minecraft.world.level.block.Block dominantAim(double[] share) {
+        if (aimWin.isEmpty()) return null;
+        Map<net.minecraft.world.level.block.Block, Integer> c = new java.util.HashMap<>();
+        net.minecraft.world.level.block.Block top = null;
+        int best = 0;
+        for (net.minecraft.world.level.block.Block b : aimWin) {
+            int n = c.merge(b, 1, Integer::sum);
+            if (n > best) {
+                best = n;
+                top = b;
+            }
+        }
+        if (share != null && share.length > 0) share[0] = best / (double) aimWin.size();
+        return top;
+    }
+
+    /** Which crop is being mined right now (null = cannot tell). */
+    private static Track cropNow(String[] how) {
+        double[] share = new double[1];
+        net.minecraft.world.level.block.Block top = dominantAim(share);
+        long now = System.currentTimeMillis();
+        boolean gain = lastGain != null && now - lastGainAt < 4000;
+        if (top != null) {
+            String bn = top.getName().getString();
+            Track t = trackOf(top);
+            if (t != null) {
+                how[0] = "aim " + bn;
+                return t;
+            }
+            if (gain && share[0] >= 0.5 && !cooldownBlocks.contains(top)) {
+                learnedNames.put(bn, lastGain.name);
+                dirty = true;
+                ev("learned: '" + bn + "' is " + lastGain.name + " (from the +x gain line)");
+                how[0] = "aim " + bn + " (learned)";
+                return lastGain;
+            }
+            if (gain) {
+                how[0] = "gain line";
+                return lastGain;
+            }
+        } else if (gain) {
+            how[0] = "gain line";
+            return lastGain;
+        }
+        Track t = byName(crops, lastCrop);
+        if (t == null) t = matchCrop(Boosters.data.crop);
+        how[0] = "last crop";
+        return t;
+    }
+
+    private static void scanFarmed(Minecraft mc) throws Exception {
+        if (!Cfg.I.milestoneLive || !"farmed".equals(Cfg.I.milestoneSource) || mc.level == null) return;
+        trackAim(mc);
+        if (tick % 2 != 0) return;
+        double v = -1;
         for (String line : Pins.sidebar(mc)) {
             Matcher m = FARMED.matcher(line);
-            if (!m.find()) continue;
-            double v = Nums.parse(m.group(1));
-            if (farmedPrev >= 0 && v > farmedPrev) {
-                Track t = byName(crops, lastCrop);
-                if (t == null) t = matchCrop(Boosters.data.crop);
-                if (t != null) {
-                    add(t, v - farmedPrev);
-                    ev("sidebar FARMED +" + Nums.exact(v - farmedPrev) + " -> " + t.name);
-                }
+            if (m.find()) {
+                v = Nums.parse(m.group(1));
+                break;
             }
+        }
+        if (v < 0) return;
+        if (farmedPrev < 0 || v < farmedPrev) {
             farmedPrev = v;
             return;
         }
+        if (v == farmedPrev) return;
+        double d = v - farmedPrev;
+        farmedPrev = v;
+        if (crops.isEmpty()) {
+            farmedNote = "open /milestones once";
+            return;
+        }
+        String[] how = new String[1];
+        Track t = cropNow(how);
+        if (t == null) {
+            farmedNote = "+" + Nums.exact(d) + " farmed, crop unknown";
+            ev("FARMED +" + Nums.exact(d) + " but no crop could be told (aim a crop block)");
+            return;
+        }
+        add(t, d, true);
+        sessionFarmed += d;
+        farmedNote = "+" + Nums.exact(d) + " " + t.name;
+        ev("FARMED +" + Nums.exact(d) + " -> " + t.name + " (" + how[0] + ")");
     }
 
     // ---- text
@@ -742,9 +856,15 @@ public final class Milestones {
             }
             try {
                 scanFarmed(mc);
+            } catch (Throwable t) {
+                String m = t.getClass().getSimpleName() + (t.getMessage() == null ? "" : ": " + t.getMessage());
+                farmedNote = "error: " + (m.length() > 40 ? m.substring(0, 40) : m);
+                if (tick % 600 == 0) CobblestonePlus.LOG.warn("FARMED counting failed", t);
+            }
+            try {
                 scanKills(mc);
             } catch (Throwable t) {
-                if (tick % 600 == 0) CobblestonePlus.LOG.warn("Kill / FARMED counting failed", t);
+                if (tick % 600 == 0) CobblestonePlus.LOG.warn("Kill counting failed", t);
             }
         }
         if (tick % 5 == 0) scanMenu(mc);
