@@ -179,25 +179,16 @@ public final class Milestones {
 
     // ------------------------------------------------------------ live counting
     //
-    // The menu is only read when you open it. In between the count moves on by itself, one at a time:
-    //   - every block you break adds 1 to its crop (2019 broken -> break one -> 2020);
-    //   - every mob you kill adds 1 to the mob with the same name ("Chicken" -> Chicken);
-    //   - a "Stage N ... completed" line finishes that stage at once.
+    // The menu is only read when you open it. In between the count moves on by itself, like vanilla would:
+    //   - BLOCKS: the block you break yourself (the one under your crosshair while you hold attack) adds 1 to its
+    //     crop: break 10 obsidian and Crying Obsidian goes up by 10. Enchant-broken blocks are not counted.
+    //   - MOBS: a mob with a milestone name ("Chicken") that dies next to you counts 1.
+    //   - A "Stage N ... completed" line finishes that stage at once.
     // Stage % = count / stage target (13,999 / 25,000 = 55.996%), so the bars follow. Opening the menu again puts
-    // the exact count back.
-    //
-    // The block you break is matched to a crop by its name. Crops that are not vanilla blocks cannot be matched,
-    // so those go to the crop whose "+x Crop (total)" line showed on the action bar last, and are taken back
-    // if no such line follows within 3s (a block that gave nothing). A gain line that has no break before it
-    // (broken by an enchant, or the break event did not fire) counts as one block itself.
+    // the exact count back. The block is matched to its crop by name; a block with a name that is not a crop
+    // (a custom looking crop) that you break counts for the crop of the last "+x Crop (total)" action bar line,
+    // if that showed within 4s.
 
-    private static final class Credit {
-        Track t;
-        long at;
-        boolean guess;
-    }
-
-    private static final java.util.ArrayDeque<Credit> credits = new java.util.ArrayDeque<>();
     private static final java.util.Set<Integer> counted = new java.util.HashSet<>();
     private static final Map<Integer, Track> near = new java.util.HashMap<>();
     private static int lastSwing = -100;
@@ -210,6 +201,48 @@ public final class Milestones {
         if (t != null) return t;
         for (Track c : m.values()) if (c.name.equalsIgnoreCase(name.trim())) return c;
         return null;
+    }
+
+    private static String norm(String s) {
+        String n = s.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+        return n.length() > 3 && n.endsWith("s") ? n.substring(0, n.length() - 1) : n;
+    }
+
+    /** Finds the crop a block / drop name belongs to: same name, then a name inside the other, then plurals. */
+    private static Track matchCrop(String name) {
+        if (name == null || name.isEmpty()) return null;
+        String nn = norm(name);
+        for (Track t : crops.values()) if (norm(t.name).equals(nn)) return t;
+        Track t = inText(name, crops);
+        if (t != null) return t;
+        Track best = null;
+        for (Track c : crops.values()) {
+            String cn = norm(c.name);
+            if (cn.length() < 4 || nn.length() < 4) continue;
+            if ((nn.contains(cn) || cn.contains(nn)) && (best == null || cn.length() > norm(best.name).length())) best = c;
+        }
+        return best;
+    }
+
+    private static final java.util.ArrayDeque<String> trail = new java.util.ArrayDeque<>();
+
+    private static void ev(String s) {
+        trail.add(s);
+        while (trail.size() > 12) trail.poll();
+        Feed.note("live", s);
+    }
+
+    /** For /cpp milestones debug. */
+    public static List<String> debug() {
+        List<String> out = new ArrayList<>();
+        out.add("live counting: " + (Cfg.I.milestoneLive ? "on" : "OFF") + ", source: " + Cfg.I.milestoneSource
+                + ", ratio mode: " + (Cfg.I.milestoneRatio ? "on" : "off") + ", crops known: " + crops.size() + ", mobs known: " + mobs.size()
+                + ", blocks watched: " + watch.size());
+        out.add("last counted: " + (lastBumped == null ? "nothing yet" : lastBumped.name + " = " + Nums.exact(lastBumped.count)));
+        out.add("last events (newest last):");
+        if (trail.isEmpty()) out.add("  none yet");
+        for (String s : trail) out.add("  " + s);
+        return out;
     }
 
     private static void add(Track t, double d) {
@@ -242,32 +275,37 @@ public final class Milestones {
         }
     }
 
-    /** A block was broken (by you, client side). */
-    public static void onBreak(String blockName) {
-        if (!Cfg.I.milestoneLive) return;
-        Track t = inText(blockName, crops);
-        boolean guess = false;
-        if (t == null) {
-            t = byName(crops, lastCrop);
-            guess = true;
-        }
-        if (t == null) return;
-        add(t, 1);
-        Credit c = new Credit();
-        c.t = t;
-        c.at = System.currentTimeMillis();
-        c.guess = guess;
-        credits.add(c);
-        while (credits.size() > 64) credits.poll();
+    // ---- blocks: only the block you are breaking yourself
+    //
+    // The block under your crosshair is watched. When it turns into air (or another block) while you hold
+    // attack, that is one block you broke. Blocks an enchant breaks around it are never looked at, so they are
+    // not counted. (Opening /milestones puts the server's exact count back; ratio mode learns the difference.)
+
+    private static final class Watch {
+        net.minecraft.world.level.block.state.BlockState state;
+        long since;
     }
 
-    // Block breaks are seen without any Fabric event: the block you look at is watched, and when its state changes
-    // while you are holding attack (broken, or replaced by the server), that is one block broken.
+    private static final Map<Long, Watch> watch = new java.util.HashMap<>();
+    private static final Map<net.minecraft.world.level.block.Block, Track> blockTrack = new java.util.HashMap<>();
+    private static final java.util.Set<net.minecraft.world.level.block.Block> noMatch = new java.util.HashSet<>();
+    private static final Map<Track, Integer> hits = new java.util.LinkedHashMap<>();
     private static java.lang.reflect.Field hitF;
     private static boolean hitLooked;
-    private static net.minecraft.core.BlockPos watchPos;
-    private static net.minecraft.world.level.block.state.BlockState watchState;
-    private static int lastAttack = -100;
+    private static Object lastLevel;
+    private static int cacheSize = -1, lastAttack = -100;
+    private static Track lastGain;
+    private static long lastGainAt;
+
+    private static Track trackOf(net.minecraft.world.level.block.Block b) {
+        Track t = blockTrack.get(b);
+        if (t != null) return t;
+        if (noMatch.contains(b)) return null;
+        t = matchCrop(b.getName().getString());
+        if (t == null) noMatch.add(b);
+        else blockTrack.put(b, t);
+        return t;
+    }
 
     private static Object hitResult(Minecraft mc) throws Exception {
         if (!hitLooked) {
@@ -279,49 +317,108 @@ public final class Milestones {
                 } catch (NoSuchFieldException ignored) {
                 }
             }
+            if (hitF == null) ev("cannot read what you are looking at on this Minecraft version (no hitResult field)");
         }
         return hitF == null ? null : hitF.get(mc);
     }
 
-    private static void scanBreaks(Minecraft mc) throws Exception {
+    private static void scanBlocks(Minecraft mc) throws Exception {
+        if (!Cfg.I.milestoneLive || !"blocks".equals(Cfg.I.milestoneSource) || crops.isEmpty()) return;
+        if (mc.level != lastLevel) {
+            lastLevel = mc.level;
+            watch.clear();
+        }
+        if (crops.size() != cacheSize) { // crops learned / forgotten: names have to be matched again
+            cacheSize = crops.size();
+            blockTrack.clear();
+            noMatch.clear();
+        }
         if (mc.options.keyAttack.isDown()) lastAttack = tick;
-        if (watchPos != null) {
-            net.minecraft.world.level.block.state.BlockState now = mc.level.getBlockState(watchPos);
-            if (!now.equals(watchState)) {
-                if (tick - lastAttack <= 20 && !watchState.isAir()) onBreak(watchState.getBlock().getName().getString());
-                watchPos = null;
-                watchState = null;
+        boolean attacking = tick - lastAttack <= 20;
+        long now = System.currentTimeMillis();
+        boolean gainRecent = lastGain != null && now - lastGainAt < 4000;
+        hits.clear();
+
+        // 1) what happened to the blocks you were looking at
+        java.util.Iterator<Map.Entry<Long, Watch>> it = watch.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Long, Watch> en = it.next();
+            Watch w = en.getValue();
+            net.minecraft.core.BlockPos pos = net.minecraft.core.BlockPos.of(en.getKey());
+            if (now - w.since > 1500 || !mc.level.hasChunkAt(pos)) {
+                it.remove();
+                continue;
+            }
+            net.minecraft.world.level.block.state.BlockState cur = mc.level.getBlockState(pos);
+            if (cur.getBlock() == w.state.getBlock()) continue;
+            it.remove();
+            if (!attacking) continue;
+            Track t = trackOf(w.state.getBlock());
+            if (t != null) {
+                if (cur.isAir() || trackOf(cur.getBlock()) != t) hits.merge(t, 1, Integer::sum);
+            } else if (cur.isAir() && gainRecent) {
+                hits.merge(lastGain, 1, Integer::sum);
             }
         }
+
+        // 2) the block you are looking at now
         Object hr = hitResult(mc);
         if (hr instanceof net.minecraft.world.phys.BlockHitResult bhr && bhr.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK) {
             net.minecraft.core.BlockPos p = bhr.getBlockPos();
-            if (watchPos == null || !watchPos.equals(p)) {
-                watchPos = p.immutable();
-                watchState = mc.level.getBlockState(p);
+            long key = p.asLong();
+            if (!watch.containsKey(key)) {
+                net.minecraft.world.level.block.state.BlockState st = mc.level.getBlockState(p);
+                if (!st.isAir()) {
+                    Watch w = new Watch();
+                    w.state = st;
+                    w.since = now;
+                    watch.put(key, w);
+                }
             }
         }
+
+        for (Map.Entry<Track, Integer> e : hits.entrySet()) {
+            add(e.getKey(), e.getValue());
+            ev("you broke: +" + e.getValue() + " " + e.getKey().name);
+        }
     }
 
-    /** A "+x Crop (total)" action bar line: it confirms (or corrects) the block that was just counted. */
+    /** A "+x Crop (total)" action bar line: tells which crop you are farming (and counts only when the source is "gain"). */
     public static void addCount(String name, double gained) {
-        Track x = byName(crops, name);
-        if (x == null) return;
-        Credit c = credits.poll();
-        if (c == null) add(x, 1);
-        else if (c.t != x) {
-            add(c.t, -1);
-            add(x, 1);
+        Track x = matchCrop(name);
+        if (x == null) {
+            ev("gain line '" + name + "' -> matches no crop milestone");
+            return;
+        }
+        lastGain = x;
+        lastGainAt = System.currentTimeMillis();
+    }
+
+    // ---- optional source: the sidebar "FARMED ... 738.10k" line (set with /cpp milestones source farmed)
+
+    private static final Pattern FARMED = Pattern.compile("(?i)\\bFARMED\\b\\D{0,8}?(" + Nums.NUM + ")");
+    private static double farmedPrev = -1;
+
+    private static void scanFarmed(Minecraft mc) {
+        if (!Cfg.I.milestoneLive || !"farmed".equals(Cfg.I.milestoneSource) || tick % 10 != 0) return;
+        for (String line : Pins.sidebar(mc)) {
+            Matcher m = FARMED.matcher(line);
+            if (!m.find()) continue;
+            double v = Nums.parse(m.group(1));
+            if (farmedPrev >= 0 && v > farmedPrev) {
+                Track t = byName(crops, lastCrop);
+                if (t == null) t = matchCrop(Boosters.data.crop);
+                if (t != null) {
+                    add(t, v - farmedPrev);
+                    ev("sidebar FARMED +" + Nums.exact(v - farmedPrev) + " -> " + t.name);
+                }
+            }
+            farmedPrev = v;
+            return;
         }
     }
 
-    private static void expire() {
-        long now = System.currentTimeMillis();
-        while (!credits.isEmpty() && now - credits.peek().at > 3000) {
-            Credit c = credits.poll();
-            if (c.guess) add(c.t, -1);
-        }
-    }
+    // ---- text
 
     private static final Pattern STAGE_UP = Pattern.compile(
             "(?i)\\bstage\\s+(\\d)\\b.*\\b(?:complete[d]?|reached|unlocked|finished|achieved)|\\b(?:complete[d]?|reached|unlocked|finished|achieved)\\b.*\\bstage\\s+(\\d)\\b");
@@ -362,29 +459,37 @@ public final class Milestones {
         return false;
     }
 
+    // ---- mobs
+
     /**
-     * Mob kills: a living thing near you whose name is a mob milestone ("Chicken") that dies, or vanishes right
-     * next to you, shortly after you swung, counts as one kill.
+     * Mob kills (enchant kills count too): a living thing within 16 blocks whose name is a mob milestone
+     * ("Chicken") that dies, or one within 10 blocks that vanishes, shortly after you swung, counts as one kill.
+     * A mob respawns after 3s as a new entity, so it is counted again when you kill it again.
      */
     private static void scanKills(Minecraft mc) {
         if (mc.player.swinging) lastSwing = tick;
         if (!Cfg.I.milestoneLive || tick % 2 != 0 || mobs.isEmpty()) return;
-        boolean recent = tick - lastSwing <= 30;
+        boolean recent = tick - lastSwing <= 60; // enchant kills come from your swing too
         java.util.Set<Integer> present = new java.util.HashSet<>();
         for (net.minecraft.world.entity.Entity e : mc.level.entitiesForRendering()) {
             if (!(e instanceof net.minecraft.world.entity.LivingEntity le) || e == mc.player) continue;
             if (e instanceof net.minecraft.world.entity.player.Player) continue;
             int id = e.getId();
             present.add(id);
-            if (e.distanceTo(mc.player) > 10) continue;
+            double dist = e.distanceTo(mc.player);
+            if (dist > 16) continue; // enchants reach further than your arm
             if (le.isDeadOrDying()) {
                 near.remove(id);
                 if (counted.add(id) && recent) {
                     Track t = inText(e.getName().getString(), mobs);
-                    if (t != null) add(t, 1);
+                    if (t != null) {
+                        add(t, 1);
+                        ev("kill: +1 " + t.name);
+                    }
                 }
                 continue;
             }
+            if (dist > 10) continue;
             if (!near.containsKey(id)) {
                 Track t = inText(e.getName().getString(), mobs);
                 if (t != null) near.put(id, t);
@@ -396,7 +501,10 @@ public final class Milestones {
             Map.Entry<Integer, Track> en = it.next();
             if (present.contains(en.getKey())) continue;
             it.remove();
-            if (recent && counted.add(en.getKey())) add(en.getValue(), 1);
+            if (recent && counted.add(en.getKey())) {
+                add(en.getValue(), 1);
+                ev("kill: +1 " + en.getValue().name);
+            }
         }
         counted.retainAll(present);
     }
@@ -420,6 +528,7 @@ public final class Milestones {
 
     public static void onGain(String name) {
         Track t = find(name);
+        if (t == null) t = matchCrop(name);
         if (t != null && !t.name.equals(lastCrop)) {
             boolean first = lastCrop.isEmpty();
             lastCrop = t.name;
@@ -479,13 +588,17 @@ public final class Milestones {
     public static void onTick(Minecraft mc) {
         if (mc.player == null) return;
         tick++;
-        expire();
         if (mc.level != null) {
             try {
-                scanBreaks(mc);
+                scanBlocks(mc);
+            } catch (Throwable t) {
+                if (tick % 600 == 0) CobblestonePlus.LOG.warn("Block counting failed", t);
+            }
+            try {
+                scanFarmed(mc);
                 scanKills(mc);
             } catch (Throwable t) {
-                if (tick % 600 == 0) CobblestonePlus.LOG.warn("Kill counting failed", t);
+                if (tick % 600 == 0) CobblestonePlus.LOG.warn("Kill / FARMED counting failed", t);
             }
         }
         if (tick % 5 == 0) scanMenu(mc);

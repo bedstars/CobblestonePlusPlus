@@ -71,6 +71,8 @@ public final class Cfg {
     public int treasureWorld = 0;         // 0 = the world you are in, 1..worlds = fixed
     public boolean treasureOthers = true; // one line per other world
     public int treasureRows = 12;         // max missing / upgrade rows
+    public String milestoneSource = "blocks"; // blocks = the block you break yourself; farmed = growth of the sidebar FARMED line
+    public int breakRadius = 12;          // how far around you broken blocks are counted
     public boolean milestoneRatio = false; // live counting uses the ratio learned from the menu instead of a plain +1 (overrides it)
     public boolean milestoneLive = true;  // count crops / kills up on screen from the action bar and chat, between menu reads
     public boolean feedLog = false;       // write every line no reader understood to feed.log (to teach the mod the server wording)
@@ -113,6 +115,8 @@ public final class Cfg {
         if (I.milestones == null) I.milestones = new W(0.0, 0.32);
         if (I.completion == null) I.completion = new W(0.5, 0.06);
         if (I.focus == null) I.focus = "";
+        if (I.milestoneSource == null || (!I.milestoneSource.equals("blocks") && !I.milestoneSource.equals("farmed"))) I.milestoneSource = "blocks";
+        if (I.breakRadius < 3 || I.breakRadius > 16) I.breakRadius = 12;
         if (I.worlds < 6) I.worlds = 6;
         I.panelOpacity = Math.max(0, Math.min(100, I.panelOpacity));
         I.menuOpacity = Math.max(0, Math.min(100, I.menuOpacity));

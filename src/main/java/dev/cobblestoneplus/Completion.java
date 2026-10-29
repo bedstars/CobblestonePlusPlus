@@ -51,8 +51,8 @@ public final class Completion {
     public static Data data = new Data();
     private static int tick;
 
-    private static final Pattern NAME = Pattern.compile("^\\W*Completion\\s+(\\d+(?:\\.\\d+)?)\\s*%");
-    private static final Pattern CAT = Pattern.compile("^[^A-Za-z]*([A-Za-z][A-Za-z' ]*?)\\s+(" + Nums.NUM + ")\\s*/\\s*(" + Nums.NUM + ")\\s*$");
+    private static final Pattern PCT = Pattern.compile("(\\d+(?:[.,]\\d+)?)\\s*%");
+    private static final Pattern CAT = Pattern.compile("^[^A-Za-z]*([A-Za-z][A-Za-z' ]*?)\\s*[:\\u00bb>\\-]*\\s*(" + Nums.NUM + ")\\s*/\\s*(" + Nums.NUM + ")\\b.*$");
     private static final Pattern PREFIX = Pattern.compile("\\[(\\d+(?:\\.\\d+)?)\\s*%\\]");
     private static final Pattern BOSS = Pattern.compile("^Boss Index\\s*\\((\\d+)\\s*/\\s*(\\d+)\\)");
 
@@ -129,10 +129,23 @@ public final class Completion {
     /** True when the stack is the Completion item; its data is stored. */
     static boolean parseItem(ItemStack st) {
         if (st.isEmpty()) return false;
-        Matcher nm = NAME.matcher(st.getHoverName().getString().trim());
-        if (!nm.find()) return false;
+        String hover = st.getHoverName().getString().trim();
+        if (!hover.toLowerCase(Locale.ROOT).contains("completion")) return false;
+        List<String> lines = lore(st);
+        double pct = -1;
+        Matcher pm = PCT.matcher(hover);
+        if (pm.find()) pct = Double.parseDouble(pm.group(1).replace(',', '.'));
+        else {
+            for (String raw : lines) {
+                Matcher q = PCT.matcher(raw);
+                if (q.find()) {
+                    pct = Double.parseDouble(q.group(1).replace(',', '.'));
+                    break;
+                }
+            }
+        }
         List<Cat> cats = new ArrayList<>();
-        for (String raw : lore(st)) {
+        for (String raw : lines) {
             Matcher m = CAT.matcher(raw.trim());
             if (!m.find()) continue;
             Cat c = new Cat();
@@ -143,7 +156,15 @@ public final class Completion {
         }
         if (cats.isEmpty()) return false;
         Data d = new Data();
-        d.percent = Double.parseDouble(nm.group(1));
+        if (pct < 0) {
+            double c = 0, m = 0;
+            for (Cat k : cats) {
+                c += k.cur;
+                m += k.max;
+            }
+            pct = data.percent >= 0 ? data.percent : (m > 0 ? Math.round(c * 1000.0 / m) / 10.0 : -1);
+        }
+        d.percent = pct;
         d.cats = cats;
         d.updated = System.currentTimeMillis();
         boolean changed = d.percent != data.percent || d.cats.size() != data.cats.size();
@@ -201,10 +222,12 @@ public final class Completion {
     /** Your own chat lines carry the percentage before your name. */
     public static void onChat(String t) {
         Minecraft mc = Minecraft.getInstance();
-        if (t == null || mc.player == null || !t.contains("\u00bb")) return;
-        if (!t.contains(mc.player.getName().getString())) return;
+        if (t == null || mc.player == null) return;
+        String me = mc.player.getName().getString();
+        int at = t.indexOf(me);
+        if (at < 0) return;
         Matcher m = PREFIX.matcher(t);
-        if (m.find()) {
+        if (m.find() && m.start() < at) {
             double p = Double.parseDouble(m.group(1));
             if (p != data.percent) {
                 data.percent = p;

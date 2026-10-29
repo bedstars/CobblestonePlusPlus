@@ -1,7 +1,12 @@
 package dev.cobblestoneplus;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.ItemLore;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -52,6 +57,41 @@ final class Feed {
             if (line.isEmpty()) continue;
             boolean used = Milestones.onText(line);
             if (!used && Cfg.I.feedLog) log(chan, line);
+        }
+    }
+
+    /** A line for the log from inside the mod (what the live counters decided). */
+    static void note(String chan, String line) {
+        if (Cfg.I.feedLog) log(chan, line);
+    }
+
+    private static String lastMenu = "";
+
+    /** With the log on, every menu you open is written out once: title, item names and tooltip lines. */
+    private static void dumpMenu(Minecraft mc) {
+        if (!(Scr.get(mc) instanceof AbstractContainerScreen<?> gs)) {
+            lastMenu = "";
+            return;
+        }
+        StringBuilder sb = new StringBuilder("[menu] " + gs.getTitle().getString() + "\n");
+        int n = 0;
+        for (Slot s : gs.getMenu().slots) {
+            if (s.container == mc.player.getInventory()) continue;
+            ItemStack st = s.getItem();
+            if (st.isEmpty()) continue;
+            if (++n > 60) break;
+            sb.append("  ").append(st.getHoverName().getString()).append('\n');
+            ItemLore l = st.get(DataComponents.LORE);
+            if (l != null) for (Component c : l.lines()) sb.append("      | ").append(c.getString()).append('\n');
+        }
+        String sig = sb.toString();
+        if (sig.equals(lastMenu)) return;
+        lastMenu = sig;
+        try {
+            Path p = path();
+            if (Files.exists(p) && Files.size(p) > 400_000) return;
+            Files.writeString(p, sig, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -148,6 +188,10 @@ final class Feed {
                 bossbars(gui);
             }
             if (Cfg.I.feedLog && tick % 20 == 0) {
+                try {
+                    dumpMenu(mc);
+                } catch (Throwable ignored) {
+                }
                 List<String> side = Pins.sidebar(mc);
                 String joined = String.join("\n", side);
                 if (!joined.equals(lastSide)) {

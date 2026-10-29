@@ -192,6 +192,18 @@ final class Cmds {
                     Cfg.save();
                     return say(c.getSource(), "Live counting " + (Cfg.I.milestoneLive ? "on." : "off (only menu reads update the numbers)."));
                 }))
+                .then(ClientCommands.literal("debug").executes(c -> {
+                    for (String line : Milestones.debug()) say(c.getSource(), line);
+                    return 1;
+                }))
+                .then(ClientCommands.literal("source")
+                        .then(ClientCommands.argument("src", StringArgumentType.word()).executes(c -> {
+                            String v = StringArgumentType.getString(c, "src").toLowerCase();
+                            if (!v.equals("blocks") && !v.equals("farmed")) return say(c.getSource(), "Use: blocks (the block you break yourself) or farmed (sidebar FARMED line).");
+                            Cfg.I.milestoneSource = v;
+                            Cfg.save();
+                            return say(c.getSource(), "Milestones count from: " + v);
+                        })))
                 .then(ClientCommands.literal("ratio").executes(c -> {
                     Cfg.I.milestoneRatio = !Cfg.I.milestoneRatio;
                     Cfg.save();
