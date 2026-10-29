@@ -79,6 +79,22 @@ Commands: `/cpp milestones on|off|world <0-9>|mobs|done|forget`
 - **What to do next** (`/cpp plan`, button in the menu, or bind a key): every progression part (crops, milestones, treasures, gem shop, reforge, bosses, enchants, recipes, pets, AFK, charms, achievements ...) with its progress, least finished last. Click one to track only that part on screen (progress, what is left, where to do it); click it again or GLOBAL to track everything. `/cpp plan <part>` / `/cpp plan global` work too.
 - Boss Index title (`Boss Index (2/6)`) updates the bosses count when you open it.
 
+## 0.9.10
+- Crops whose block has no crop name (texture pack / pattern block) are now learned from the floor: the block that makes up most of the floor under you while a `+x Crop` line shows belongs to that crop, so every one of them breaking near you counts (before, only the block you aimed at counted: ~50 for 6000 blocks).
+
+## 0.9.9
+- **Counts every crop block that breaks near you** (default, `/cpp milestones source blocks`): the server's milestone counts the blocks your enchants break too, so counting only the block under the crosshair ran behind. A crop block turning into the cooldown block (or air) is +1; the cooldown block turning back is not. `/cpp milestones radius <3-16>` sets how far around you (12 by default). `/cpp milestones source mine` goes back to counting only the block you aim at.
+
+## 0.9.8
+- A status line under the milestones panel shows what the live counter sees: `aim: Bee Nest -> Bee Nest | counted 12`, or why it is stuck (`no crop match`, `cannot read the block you look at`, `error: ...`). Menu toggle: "Status line under the panel".
+
+## 0.9.6
+- Open `/warp` > "Warp to Crop" once: its items are the crop blocks (`Bee Nest` = `minecraft:bee_nest`), so the mod learns which block belongs to which crop whatever the texture pack makes it look like.
+
+## 0.9.5
+- Crops that look like another block (pattern blocks): a block you hit that turns into the cooldown block while a `+x Crop` line is showing counts +1; the cooldown block is learned, so it going back to the crop is not counted. The block under the crosshair is now found by type, and `/cpp milestones debug` lists what you are looking at.
+- If `/stats` is open and no Completion item can be read, the menu is written to `config/cobblestoneplus/stats-dump.txt`.
+
 ## 0.9.4 changes
 - **Milestones count up live, by 1.** The block you break yourself (the one under your crosshair while you hold attack) adds 1 to its crop: 2019 -> 2020. Enchant-broken blocks are not counted. The block goes into its cooldown block and back; only the break counts. A block whose name is not a crop name counts for the crop of the last `+x Crop (total)` action bar line (within 4s).
 - **Mobs.** A mob with a milestone name (`Chicken`) that dies within 16 blocks (or vanishes within 10) shortly after you swung adds 1, enchant kills included. A mob that respawns after 3s counts again when killed again.

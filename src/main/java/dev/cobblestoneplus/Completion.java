@@ -128,10 +128,20 @@ public final class Completion {
 
     /** True when the stack is the Completion item; its data is stored. */
     static boolean parseItem(ItemStack st) {
+        return parseItem(st, false);
+    }
+
+    /** loose: the item does not have to be NAMED completion, a tooltip that talks about completion is enough. */
+    static boolean parseItem(ItemStack st, boolean loose) {
         if (st.isEmpty()) return false;
         String hover = st.getHoverName().getString().trim();
-        if (!hover.toLowerCase(Locale.ROOT).contains("completion")) return false;
         List<String> lines = lore(st);
+        boolean named = hover.toLowerCase(Locale.ROOT).contains("complet");
+        if (!named) {
+            boolean talks = false;
+            for (String raw : lines) if (raw.toLowerCase(Locale.ROOT).contains("complet")) talks = true;
+            if (!loose || !talks) return false;
+        }
         double pct = -1;
         Matcher pm = PCT.matcher(hover);
         if (pm.find()) pct = Double.parseDouble(pm.group(1).replace(',', '.'));
@@ -180,8 +190,27 @@ public final class Completion {
         if (tick % 10 == 0 && Scr.get(mc) instanceof AbstractContainerScreen<?> gs) {
             Matcher b = BOSS.matcher(gs.getTitle().getString().trim());
             if (b.find()) setCat("Bosses Defeated", Double.parseDouble(b.group(1)), Double.parseDouble(b.group(2)));
+            boolean found = false;
             for (Slot s : gs.getMenu().slots) {
-                if (parseItem(s.getItem())) break;
+                if (parseItem(s.getItem())) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                for (Slot s : gs.getMenu().slots) {
+                    if (parseItem(s.getItem(), true)) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) {
+                boolean stats = gs.getTitle().getString().toLowerCase(Locale.ROOT).contains("stats");
+                for (Slot s : gs.getMenu().slots) {
+                    if (s.getItem().getHoverName().getString().toLowerCase(Locale.ROOT).contains("booster")) stats = true;
+                }
+                if (stats) Feed.dumpStats(mc, gs);
             }
         }
         if (tick % 100 == 50) {

@@ -180,8 +180,8 @@ public final class Milestones {
     // ------------------------------------------------------------ live counting
     //
     // The menu is only read when you open it. In between the count moves on by itself, like vanilla would:
-    //   - BLOCKS: the block you break yourself (the one under your crosshair while you hold attack) adds 1 to its
-    //     crop: break 10 obsidian and Crying Obsidian goes up by 10. Enchant-broken blocks are not counted.
+    //   - BLOCKS (default): every crop block that breaks within reach of you adds 1 to its crop, whether you or an
+    //     enchant broke it (the server counts them all). Source "mine": only the block under your crosshair.
     //   - MOBS: a mob with a milestone name ("Chicken") that dies next to you counts 1.
     //   - A "Stage N ... completed" line finishes that stage at once.
     // Stage % = count / stage target (13,999 / 25,000 = 55.996%), so the bars follow. Opening the menu again puts
@@ -277,8 +277,8 @@ public final class Milestones {
 
     // ---- blocks: only the block you are breaking yourself
     //
-    // The block under your crosshair is watched. When it turns into air (or another block) while you hold
-    // attack, that is one block you broke. Blocks an enchant breaks around it are never looked at, so they are
+    // The block under your crosshair is watched. When it turns into air (or another block), that is one block
+    // you broke (the attack key is not checked: macros / auto clickers do not press it). Blocks an enchant breaks around it are never looked at, so they are
     // not counted. (Opening /milestones puts the server's exact count back; ratio mode learns the difference.)
 
     private static final class Watch {
@@ -287,18 +287,71 @@ public final class Milestones {
     }
 
     private static final Map<Long, Watch> watch = new java.util.HashMap<>();
+    /** Position -> crop block seen there, for every crop block within reach of you ("blocks" source). */
+    private static final Map<Long, net.minecraft.world.level.block.Block> around = new java.util.HashMap<>();
+    private static final int DOWN = 8, UP = 3;
     private static final Map<net.minecraft.world.level.block.Block, Track> blockTrack = new java.util.HashMap<>();
     private static final java.util.Set<net.minecraft.world.level.block.Block> noMatch = new java.util.HashSet<>();
     private static final Map<Track, Integer> hits = new java.util.LinkedHashMap<>();
+    /** Block types learned while farming: the cooldown block a broken block turns into, and the crop-like blocks. */
+    private static final java.util.Set<net.minecraft.world.level.block.Block> cooldownBlocks = new java.util.HashSet<>();
+    private static final java.util.Set<net.minecraft.world.level.block.Block> cropLike = new java.util.HashSet<>();
+    private static net.minecraft.world.level.block.Block lastTarget;
     private static java.lang.reflect.Field hitF;
     private static boolean hitLooked;
     private static Object lastLevel;
-    private static int cacheSize = -1, lastAttack = -100;
+    private static int cacheSize = -1;
     private static Track lastGain;
     private static long lastGainAt;
+    private static String aimText = "no data yet", lastErr;
+    private static int sessionBlocks;
+
+    /** One short line for the bottom of the milestones panel: what the live counter sees (screenshot it when it is stuck). */
+    public static String status() {
+        if (!Cfg.I.milestoneLive) return "live counting off";
+        if (!"blocks".equals(Cfg.I.milestoneSource) && !"mine".equals(Cfg.I.milestoneSource)) return "source: " + Cfg.I.milestoneSource;
+        if (lastErr != null) return "error: " + lastErr;
+        if (crops.isEmpty()) return "open /milestones once";
+        if (hitLooked && hitF == null) return "cannot read the block you look at";
+        String s = ("mine".equals(Cfg.I.milestoneSource) ? "mine" : "all") + " | aim: " + aimText + " | counted " + sessionBlocks;
+        return s.length() > 72 ? s.substring(0, 72) : s;
+    }
+
+    /** Block -> crop, learned from the "Warp to Crop" menu (its items are the crop blocks, whatever the texture pack shows). */
+    private static final Map<net.minecraft.world.level.block.Block, Track> learned = new java.util.HashMap<>();
+
+    private static void learnWarp(Minecraft mc) {
+        if (tick % 10 != 0 || crops.isEmpty()) return;
+        if (!(Scr.get(mc) instanceof AbstractContainerScreen<?> gs)) return;
+        if (!gs.getTitle().getString().toLowerCase(Locale.ROOT).contains("warp to crop")) return;
+        for (Slot s : gs.getMenu().slots) {
+            if (s.container == mc.player.getInventory()) continue;
+            ItemStack st = s.getItem();
+            if (st.isEmpty()) continue;
+            Track t = matchCrop(st.getHoverName().getString());
+            net.minecraft.world.level.block.Block b = net.minecraft.world.level.block.Block.byItem(st.getItem());
+            if (t != null && b != net.minecraft.world.level.block.Blocks.AIR && learned.get(b) != t) {
+                learned.put(b, t);
+                noMatch.remove(b);
+                blockTrack.remove(b);
+            }
+        }
+    }
+
+    /**
+     * Block -> crop for crops whose block has no crop name (a texture pack / pattern block): the block that makes
+     * up most of the floor around you while a "+x Crop" line is showing is that crop's block.
+     */
+    private static final Map<net.minecraft.world.level.block.Block, Track> freqMap = new java.util.HashMap<>();
+    private static final Map<net.minecraft.world.level.block.Block, Integer> tally = new java.util.HashMap<>();
+    private static int tallyTotal;
 
     private static Track trackOf(net.minecraft.world.level.block.Block b) {
+        Track l = learned.get(b);
+        if (l != null) return l;
         Track t = blockTrack.get(b);
+        if (t != null) return t;
+        t = freqMap.get(b);
         if (t != null) return t;
         if (noMatch.contains(b)) return null;
         t = matchCrop(b.getName().getString());
@@ -311,30 +364,101 @@ public final class Milestones {
         if (!hitLooked) {
             hitLooked = true;
             for (Class<?> c = Minecraft.class; c != null && hitF == null; c = c.getSuperclass()) {
-                try {
-                    hitF = c.getDeclaredField("hitResult");
-                    hitF.setAccessible(true);
-                } catch (NoSuchFieldException ignored) {
+                for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                    if (net.minecraft.world.phys.HitResult.class.isAssignableFrom(f.getType())) {
+                        f.setAccessible(true);
+                        hitF = f;
+                        break;
+                    }
                 }
             }
-            if (hitF == null) ev("cannot read what you are looking at on this Minecraft version (no hitResult field)");
+            if (hitF == null) ev("cannot read what you are looking at on this Minecraft version (no HitResult field)");
         }
         return hitF == null ? null : hitF.get(mc);
     }
 
+    /**
+     * Every block of a crop within reach of you: when one turns into something else (the cooldown block, or air)
+     * that is one block broken, whoever broke it (you or an enchant), because the server's milestone counts them
+     * all. Blocks that come back (the cooldown block turning into the crop again) are not counted.
+     */
+    private static void scanAround(Minecraft mc) {
+        int r = Math.max(3, Math.min(16, Cfg.I.breakRadius));
+        net.minecraft.core.BlockPos base = mc.player.blockPosition();
+        int bx = base.getX(), by = base.getY(), bz = base.getZ();
+        net.minecraft.core.BlockPos.MutableBlockPos mp = new net.minecraft.core.BlockPos.MutableBlockPos();
+        for (int x = bx - r; x <= bx + r; x++) {
+            for (int z = bz - r; z <= bz + r; z++) {
+                for (int y = by - DOWN; y <= by + UP; y++) {
+                    mp.set(x, y, z);
+                    long key = mp.asLong();
+                    if (!mc.level.hasChunkAt(mp)) {
+                        around.remove(key);
+                        continue;
+                    }
+                    net.minecraft.world.level.block.state.BlockState cst = mc.level.getBlockState(mp);
+                    net.minecraft.world.level.block.Block cur = cst.getBlock();
+                    if (y == by - 1 && !cst.isAir()) { // the floor you stand on
+                        tally.merge(cur, 1, Integer::sum);
+                        tallyTotal++;
+                    }
+                    net.minecraft.world.level.block.Block old = around.get(key);
+                    Track tc = trackOf(cur);
+                    if (old != null && old != cur) {
+                        Track to = trackOf(old);
+                        if (to != null && tc != to) hits.merge(to, 1, Integer::sum);
+                    }
+                    if (tc != null) {
+                        if (old != cur) around.put(key, cur);
+                    } else if (old != null) {
+                        around.remove(key);
+                    }
+                }
+            }
+        }
+        if (tick % 20 == 0) {
+            if (lastGain != null && System.currentTimeMillis() - lastGainAt < 4000 && tallyTotal > 0) {
+                net.minecraft.world.level.block.Block top = null;
+                int best = 0;
+                for (Map.Entry<net.minecraft.world.level.block.Block, Integer> e : tally.entrySet()) {
+                    if (e.getValue() > best) {
+                        best = e.getValue();
+                        top = e.getKey();
+                    }
+                }
+                if (top != null && best * 2 >= tallyTotal && (trackOf(top) == null || freqMap.containsKey(top)) && freqMap.get(top) != lastGain) {
+                    freqMap.put(top, lastGain);
+                    ev("learned: '" + top.getName().getString() + "' blocks are " + lastGain.name + " blocks");
+                }
+            }
+            tally.clear();
+            tallyTotal = 0;
+            around.keySet().removeIf(k -> Math.abs(net.minecraft.core.BlockPos.getX(k) - bx) > r + 2
+                    || Math.abs(net.minecraft.core.BlockPos.getZ(k) - bz) > r + 2
+                    || net.minecraft.core.BlockPos.getY(k) < by - DOWN - 2
+                    || net.minecraft.core.BlockPos.getY(k) > by + UP + 2);
+        }
+    }
+
     private static void scanBlocks(Minecraft mc) throws Exception {
-        if (!Cfg.I.milestoneLive || !"blocks".equals(Cfg.I.milestoneSource) || crops.isEmpty()) return;
+        String src = Cfg.I.milestoneSource;
+        if (!Cfg.I.milestoneLive || !("blocks".equals(src) || "mine".equals(src)) || crops.isEmpty()) return;
+        boolean mine = "mine".equals(src); // only the block under your crosshair; otherwise every crop block that breaks near you
+        learnWarp(mc);
         if (mc.level != lastLevel) {
             lastLevel = mc.level;
             watch.clear();
+            around.clear();
+            freqMap.clear();
+            cooldownBlocks.clear();
+            cropLike.clear();
         }
         if (crops.size() != cacheSize) { // crops learned / forgotten: names have to be matched again
             cacheSize = crops.size();
             blockTrack.clear();
             noMatch.clear();
+            freqMap.clear();
         }
-        if (mc.options.keyAttack.isDown()) lastAttack = tick;
-        boolean attacking = tick - lastAttack <= 20;
         long now = System.currentTimeMillis();
         boolean gainRecent = lastGain != null && now - lastGainAt < 4000;
         hits.clear();
@@ -352,23 +476,40 @@ public final class Milestones {
             net.minecraft.world.level.block.state.BlockState cur = mc.level.getBlockState(pos);
             if (cur.getBlock() == w.state.getBlock()) continue;
             it.remove();
-            if (!attacking) continue;
-            Track t = trackOf(w.state.getBlock());
+            net.minecraft.world.level.block.Block ob = w.state.getBlock(), cb = cur.getBlock();
+            Track t = trackOf(ob);
             if (t != null) {
-                if (cur.isAir() || trackOf(cur.getBlock()) != t) hits.merge(t, 1, Integer::sum);
-            } else if (cur.isAir() && gainRecent) {
+                // a block named like a crop turned into something else (in "blocks" mode the scan around you counts it)
+                if (mine && (cur.isAir() || trackOf(cb) != t)) hits.merge(t, 1, Integer::sum);
+            } else if (gainRecent && trackOf(cb) == null && (cropLike.contains(ob) || !cooldownBlocks.contains(ob))) {
+                // the crops look like another block (a pattern block, say): a block you hit changed into the
+                // cooldown block while a "+x Crop" line is showing. The block it turns into is remembered as the
+                // cooldown block, so the cooldown block going back to the crop is not counted as a break.
                 hits.merge(lastGain, 1, Integer::sum);
+                cropLike.add(ob);
+                cooldownBlocks.add(cb);
+                cooldownBlocks.remove(ob);
             }
         }
 
         // 2) the block you are looking at now
         Object hr = hitResult(mc);
+        if (hr == null) aimText = "no crosshair data";
+        else if (!(hr instanceof net.minecraft.world.phys.BlockHitResult b0) || b0.getType() != net.minecraft.world.phys.HitResult.Type.BLOCK) aimText = "no block";
         if (hr instanceof net.minecraft.world.phys.BlockHitResult bhr && bhr.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK) {
             net.minecraft.core.BlockPos p = bhr.getBlockPos();
             long key = p.asLong();
             if (!watch.containsKey(key)) {
                 net.minecraft.world.level.block.state.BlockState st = mc.level.getBlockState(p);
                 if (!st.isAir()) {
+                    if (st.getBlock() != lastTarget) {
+                        lastTarget = st.getBlock();
+                        Track tt = trackOf(lastTarget);
+                        aimText = lastTarget.getName().getString() + " -> " + (tt != null ? tt.name
+                                : cooldownBlocks.contains(lastTarget) ? "cooldown" : "no crop match");
+                        ev("looking at '" + lastTarget.getName().getString() + "' -> " + (tt != null ? "crop " + tt.name
+                                : cooldownBlocks.contains(lastTarget) ? "cooldown block" : "no crop name match (counts through the gain line)"));
+                    }
                     Watch w = new Watch();
                     w.state = st;
                     w.since = now;
@@ -377,8 +518,10 @@ public final class Milestones {
             }
         }
 
+        if (!mine) scanAround(mc);
         for (Map.Entry<Track, Integer> e : hits.entrySet()) {
             add(e.getKey(), e.getValue());
+            sessionBlocks += e.getValue();
             ev("you broke: +" + e.getValue() + " " + e.getKey().name);
         }
     }
@@ -591,7 +734,10 @@ public final class Milestones {
         if (mc.level != null) {
             try {
                 scanBlocks(mc);
+                lastErr = null;
             } catch (Throwable t) {
+                String m = t.getClass().getSimpleName() + (t.getMessage() == null ? "" : ": " + t.getMessage());
+                lastErr = m.length() > 50 ? m.substring(0, 50) : m;
                 if (tick % 600 == 0) CobblestonePlus.LOG.warn("Block counting failed", t);
             }
             try {

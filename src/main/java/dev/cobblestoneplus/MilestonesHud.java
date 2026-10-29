@@ -106,11 +106,14 @@ final class MilestonesHud {
         int w = 7 + nW + 8 + sW + 8 + BAR + 4 + pW + (cW > 0 ? 6 + cW : 0) + (iW > 0 ? 8 + iW : 0) + (tW > 0 ? 6 + tW : 0) + 7;
         w = Math.max(w, Ui.tw(title) + Ui.tw(head) + 22);
         for (String[] o : others) w = Math.max(w, 7 + Ui.tw(o[0]) + 14 + Ui.tw(o[1]) + 7);
+        String status = Cfg.I.milestoneStatus ? Milestones.status() : "";
+        if (!status.isEmpty()) w = Math.max(w, 14 + Ui.tw(status));
         int rows = crops.size() + mobs.size();
         int sections = (crops.isEmpty() ? 0 : 1) + (mobs.isEmpty() ? 0 : 1);
         int h = 16 + rows * 12 + sections * 11 + 3;
         if (rows == 0) h = 16 + 3;
         if (!others.isEmpty()) h += 11 + others.size() * 11;
+        if (!status.isEmpty()) h += 12;
 
         int x = 0, y = 0;
         Ui.rr(g, x, y, w, h, Ui.PANEL);
@@ -162,6 +165,7 @@ final class MilestonesHud {
                 ry += 11;
             }
         }
+        if (!status.isEmpty()) Ui.text(g, status, x + 7, ry + 1, Ui.DIM);
         return new int[]{w, h};
     }
 }

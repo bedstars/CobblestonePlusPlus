@@ -199,10 +199,16 @@ final class Cmds {
                 .then(ClientCommands.literal("source")
                         .then(ClientCommands.argument("src", StringArgumentType.word()).executes(c -> {
                             String v = StringArgumentType.getString(c, "src").toLowerCase();
-                            if (!v.equals("blocks") && !v.equals("farmed")) return say(c.getSource(), "Use: blocks (the block you break yourself) or farmed (sidebar FARMED line).");
+                            if (!v.equals("blocks") && !v.equals("mine") && !v.equals("farmed")) return say(c.getSource(), "Use: blocks (every crop block that breaks near you), mine (only the block you aim at) or farmed (sidebar FARMED line).");
                             Cfg.I.milestoneSource = v;
                             Cfg.save();
                             return say(c.getSource(), "Milestones count from: " + v);
+                        })))
+                .then(ClientCommands.literal("radius")
+                        .then(ClientCommands.argument("n", IntegerArgumentType.integer(3, 16)).executes(c -> {
+                            Cfg.I.breakRadius = IntegerArgumentType.getInteger(c, "n");
+                            Cfg.save();
+                            return say(c.getSource(), "Broken crop blocks are counted within " + Cfg.I.breakRadius + " blocks of you.");
                         })))
                 .then(ClientCommands.literal("ratio").executes(c -> {
                     Cfg.I.milestoneRatio = !Cfg.I.milestoneRatio;

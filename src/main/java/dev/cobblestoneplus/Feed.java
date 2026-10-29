@@ -65,7 +65,33 @@ final class Feed {
         if (Cfg.I.feedLog) log(chan, line);
     }
 
-    private static String lastMenu = "";
+    private static String lastMenu = "", lastStats = "";
+
+    private static String menuText(Minecraft mc, AbstractContainerScreen<?> gs) {
+        StringBuilder sb = new StringBuilder("[menu] " + gs.getTitle().getString() + "\n");
+        int n = 0;
+        for (Slot s : gs.getMenu().slots) {
+            if (s.container == mc.player.getInventory()) continue;
+            ItemStack st = s.getItem();
+            if (st.isEmpty()) continue;
+            if (++n > 60) break;
+            sb.append("  ").append(st.getHoverName().getString()).append('\n');
+            ItemLore l = st.get(DataComponents.LORE);
+            if (l != null) for (Component c : l.lines()) sb.append("      | ").append(c.getString()).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** The /stats menu could not be read: write it out (config/cobblestoneplus/stats-dump.txt) so the reader can be fixed. */
+    static void dumpStats(Minecraft mc, AbstractContainerScreen<?> gs) {
+        String sig = menuText(mc, gs);
+        if (sig.equals(lastStats)) return;
+        lastStats = sig;
+        try {
+            Files.writeString(Cfg.dir().resolve("stats-dump.txt"), sig);
+        } catch (Throwable ignored) {
+        }
+    }
 
     /** With the log on, every menu you open is written out once: title, item names and tooltip lines. */
     private static void dumpMenu(Minecraft mc) {

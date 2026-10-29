@@ -100,6 +100,7 @@ final class MenuScreen extends CppScreen {
                 v -> Cfg.I.milestoneWorld = v.equals("auto") ? 0 : Integer.parseInt(v)));
         ms.add(new Tog("Show mob milestones", () -> Cfg.I.milestoneMobs, v -> Cfg.I.milestoneMobs = v));
         ms.add(new Tog("Ratio mode: count by learned menu ratio, not +1", () -> Cfg.I.milestoneRatio, v -> Cfg.I.milestoneRatio = v));
+        ms.add(new Tog("Status line under the panel", () -> Cfg.I.milestoneStatus, v -> Cfg.I.milestoneStatus = v));
         ms.add(new Tog("Count up live (action bar / chat)", () -> Cfg.I.milestoneLive, v -> Cfg.I.milestoneLive = v));
         ms.add(new Tog("List the other worlds", () -> Cfg.I.milestoneOthers, v -> Cfg.I.milestoneOthers = v));
         ms.add(new Tog("Also show finished ones", () -> Cfg.I.milestoneDone, v -> Cfg.I.milestoneDone = v));
